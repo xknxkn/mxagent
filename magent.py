@@ -170,21 +170,28 @@ if isinstance(result, AIMessage) and result.tool_calls:
             if isinstance(tool_obj, str):
                 tool_callable = None
                 if hasattr(llm, "tools"):
+                    print("xkn1")
                     tool_callable = llm.tools.get(tool_obj)
                 # fallback: try to resolve a global function with that name
                 if tool_callable is None:
+                    print("xkn2")
                     tool_callable = globals().get(tool_obj)
                 if tool_callable is None:
+                    print("xkn3")
                     print(f"Could not resolve tool callable for name: {tool_obj}")
                 else:
                     if callable(tool_callable):
+                        print("xkn5")
                         tool_result = tool_callable(**tool_input)
                     elif hasattr(tool_callable, "invoke"):
+                        print("xkn6")
                         # Some tool wrappers expect a single 'input' argument rather than **kwargs.
                         try:
+                            print("xkn7")
                             tool_result = tool_callable.invoke(**tool_input)
                         except TypeError:
                             try:
+                                print("xkn8")
                                 tool_result = tool_callable.invoke(tool_input)
                             except Exception as e:
                                 print("Tool invoke failed:", e)
@@ -193,10 +200,12 @@ if isinstance(result, AIMessage) and result.tool_calls:
 
             # If tool is already a callable/function
             elif callable(tool_obj):
+                print("xkn9")
                 tool_result = tool_obj(**(tool_input or {}))
 
             # If tool is an object with an invoke method
             elif hasattr(tool_obj, "invoke"):
+                print("xkn10")
                 tool_result = tool_obj.invoke(**(tool_input or {}))
 
             else:
@@ -204,6 +213,7 @@ if isinstance(result, AIMessage) and result.tool_calls:
 
         else:
             # original object-style calls (has attributes)
+            print("xkn11")
             tool_result = call.tool.invoke(**call.tool_input)
 
         print("tool result is", tool_result)
