@@ -3,7 +3,7 @@ from openai import OpenAI
 import json
 
 client = OpenAI(
-    api_key="sk-jUE8vi5id8DmGcnxpF95SEGIf8CGFyH5xpJjiFF2vsVy5cN7",
+    api_key="skF2vsVy5cN7",
     base_url="https://api.moonshot.cn/v1",
 )
 
