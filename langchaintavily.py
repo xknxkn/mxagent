@@ -42,18 +42,11 @@ def llmtool_invoke_tool(str_input: str):
                 tool_callable = globals().get(tool_obj)
                 tool_result = tool_callable.invoke(tool_input)
                 print(tool_result)
+    else:
+        print(result.content)
+           
 
 
-
-result = llm.invoke("Hi, how are you?")
-print(result,"\n\n")
-llmtool_invoke_tool("请帮我搜索一下上海今天天气如何")
-
-
-
-
-
-
-
-print(result,"\n\n")
+llmtool_invoke_tool("Hi, how are you?")
+llmtool_invoke_tool("上海今天天气如何,用中文回答")
 
