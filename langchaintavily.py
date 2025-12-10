@@ -18,7 +18,7 @@ except Exception:
 @tool
 def tavily_search(query: str) -> str:
     """Use this tool to search the web for recent information."""
-    client = TavilyClient("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")
+    client = TavilyClient("tvly-dev-xxxxxxxxx") # replace with your Tavily API key
     response = client.search(
         query=query,
         max_results=1
