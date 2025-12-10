@@ -7,6 +7,8 @@ import ollama
 sys.stdout.reconfigure(encoding="utf-8")
 sys.stderr.reconfigure(encoding="utf-8")
 
+#原理演示
+#完整的上下文
 response = ollama.chat(model="qwen3-vl:235b-cloud", messages
                        =[{'role': 'system', 'content': 'You are a helpful assistant.'},
                          {'role': 'user', 'content': 'Hello!'},
@@ -17,12 +19,14 @@ response = ollama.chat(model="qwen3-vl:235b-cloud", messages
                          ])
 print("round 1-----------------",response['message']['content'])
 
+#再次运行后上下文丢失
 response = ollama.chat(model="qwen3-vl:235b-cloud", messages
                        =[{'role': 'system', 'content': 'You are a helpful assistant.'},
                          {'role': 'user', 'content': 'who am I'}
                          ])
 print("round 2---------------",response['message']['content'])
 
+#利用Gradio的history里面的user部分得到对user的对话话记忆生成user上下文
 def chat_fn(message, history):
     messages = []
     msg = {'role': 'system', 'content': 'You are a helpful assistant.'}
