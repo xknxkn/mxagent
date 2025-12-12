@@ -5,6 +5,8 @@ from tavily import TavilyClient
 from typing import List
 from pypinyin import lazy_pinyin
 from difflib import SequenceMatcher
+import markdown
+from weasyprint import HTML
 
 import unicodedata
 import gradio as gr
@@ -14,20 +16,31 @@ import datetime
 import pandas as pd
 import unicodedata
 import re
+import os
 
 # 打印显示中文
 sys.stdout.reconfigure(encoding="utf-8")
 sys.stderr.reconfigure(encoding="utf-8")
 
+import os
 def tavily_search(query: str) -> str:
     """Use this tool to search the web for recent information."""
-    client = TavilyClient("tvly-dev-xxxxxxx") # replace with your Tavily API key
-    response = client.search(
-        query=query,
-        max_results=1
-    )
-    print("response of tavily search is",response)
-    return response['results'][0]["content"]
+    # 从环境变量获取API密钥，如果未设置则使用默认值
+    api_key = os.environ.get("TAVILY_API_KEY", "tvly-dev-xxxxxxx")
+    client = TavilyClient(api_key)
+    try:
+        response = client.search(
+            query=query,
+            max_results=1
+        )
+        print("response of tavily search is", response)
+        if 'results' in response and len(response['results']) > 0 and 'content' in response['results'][0]:
+            return response['results'][0]["content"]
+        else:
+            return "搜索结果格式异常，无法获取内容"
+    except Exception as e:
+        print(f"Tavily搜索错误: {e}")
+        return f"搜索失败: {str(e)}"
 
 @tool
 def get_weather(location: str) -> str:
@@ -86,18 +99,18 @@ def find_batago_student(name:str) -> str:
     # If input contains Chinese characters, try exact normalized match first
     if re.search(r'[\u4e00-\u9fff]', input_raw):
         if input_norm in norm_to_orig:
-            return norm_to_orig[input_norm]+"是倍塔狗人工智能的学生，欢迎"
+            return norm_to_orig[input_norm]+":是倍塔狗人工智能的学生，欢迎"
         # try case-insensitive contains in original names
         for n in names:
             if input_raw in n:
-                return n+"是倍塔狗人工智能的学生，欢迎"
+                return n+":是倍塔狗人工智能的学生，欢迎"
 
     # prepare pinyin query
     py_query = re.sub(r'[^a-zA-Z]', '', input_raw).lower()
     # if query empty after removing punctuation, fall back to normalized exact match
     if not py_query:
         if input_norm in norm_to_orig:
-            return norm_to_orig[input_norm]+"是倍塔狗人工智能的学生，欢迎"
+            return norm_to_orig[input_norm]+":是倍塔狗人工智能的学生，欢迎"
         # fallback: fuzzy compare normalized names
         best = None
         best_score = 0.0
@@ -106,13 +119,13 @@ def find_batago_student(name:str) -> str:
             if score > best_score:
                 best_score = score; best = orig
         if best_score >= 0.6:
-            return best+"是倍塔狗人工智能的学生，欢迎"
+            return best+":是倍塔狗人工智能的学生，欢迎"
         return f'未能识别名字：{name}. 建议检查拼写或使用中文姓名。'
 
     # exact pinyin match
     if py_query in pinyin_index:
         # if multiple names share same pinyin, return the first (could be refined)
-        return pinyin_index[py_query][0]+"是倍塔狗人工智能的学生，欢迎"
+        return pinyin_index[py_query][0]+":是倍塔狗人工智能的学生，欢迎"
 
     # fuzzy pinyin match: compute best ratio against all pinyin keys
     best = None
@@ -128,7 +141,7 @@ def find_batago_student(name:str) -> str:
     # if score is reasonable, return first original name of best pinyin key
     py_key, orig_list = best
     if best_score >= 0.5:
-        return orig_list[0]+"是倍塔狗人工智能的学生，欢迎"
+        return orig_list[0]+":是倍塔狗人工智能的学生，欢迎"
     # else return message with top few suggestions
     # build top3 suggestions
     scored = []
@@ -158,7 +171,17 @@ def generate_summary(student_name: str, time: str) -> str:
     Returns:
         str: A summary of the student's learning situation.
     """
-
+    # 首先调用find_batago_student函数验证并获取正确的学生姓名
+    student_check_result = find_batago_student(student_name)
+    
+    # 检查是否找到了学生（如果返回结果包含冒号，则说明找到了学生）
+    if ':' not in student_check_result:
+        # 如果没有找到学生，直接返回错误信息
+        return student_check_result
+    
+    # 提取冒号前的正确学生姓名
+    correct_student_name = student_check_result.split(':')[0]
+    
     def quarter_bounds(ref: datetime.datetime, offset=0):
         q = (ref.month - 1) // 3 + 1 + offset
         y = ref.year
@@ -219,12 +242,13 @@ def generate_summary(student_name: str, time: str) -> str:
 
     df['上课时间'] = pd.to_datetime(df['上课时间'], errors='coerce')
     df['学生姓名_标准'] = df['学生姓名'].astype(str).apply(normalize_name)
-    target = normalize_name(student_name)
+    target = normalize_name(correct_student_name)
     student_df = df[df['学生姓名_标准'] == target]
     if student_df.empty:
         candidates = list(df['学生姓名'].dropna().astype(str).unique()[:200])
-        return f'未找到学生 {student_name} 的记录。数据中可选学生（最多200个显示）: {"、".join(candidates)}'
+        return f'未找到学生 {correct_student_name} 的记录。数据中可选学生（最多200个显示）: {"、".join(candidates)}'
 
+    # 确保 mapping 变量始终被定义
     signals = parse_time_signals(time)
     mapping = [f"{sig} -> {st.date()} ~ {ed.date()}" for sig,(st,ed) in signals]
     start, end = signals[0][1]
@@ -234,7 +258,7 @@ def generate_summary(student_name: str, time: str) -> str:
 
     contents = sel['内容'].dropna().astype(str).tolist()
     if not contents:
-        return f"时间映射：{'; '.join(mapping)}\n{student_name} 在所选时间段没有课程'内容'进行摘要。"
+        return f"{correct_student_name} 没有课程'内容'进行分析。"
 
     # limit length
     max_chars = 6000
@@ -247,10 +271,16 @@ def generate_summary(student_name: str, time: str) -> str:
         count += len(t) + 1
 
     
-    llm = ChatOllama(model="qwen3-vl:235b-cloud")
-    result = llm.invoke(f"请把下面多次课程记录的内容合并并生成不超过200字的中文学习总结：{joined}")
-    ai_summary = result.content
-    return f"时间映射：{'; '.join(mapping)}\n摘要：{ai_summary[:200]}"
+    try:
+        llm = ChatOllama(model="qwen3-vl:235b-cloud")
+        result = llm.invoke(f"请把下面多次课程记录的内容合并并生成不超过200字的中文学习总结：{joined}")
+        ai_summary = result.content
+        return f"时间映射：{'; '.join(mapping)}\n摘要（{correct_student_name}）：{ai_summary[:200]}"
+    except Exception as e:
+        error_msg = str(e)
+        if "Service Temporarily Unavailable" in error_msg or "503" in error_msg:
+            return "AI服务暂时不可用，请稍后再试。"
+        return f"生成摘要时出错：{error_msg}"
 
 @tool
 def career_planning(student_name: str, career_target: str) -> str:
@@ -290,8 +320,9 @@ def career_planning(student_name: str, career_target: str) -> str:
             break
         joined += t + ' '
         count += len(t) + 1
-    llm = ChatOllama(model="qwen3-vl:235b-cloud", temperature=0.9)
-    result = llm.invoke(f'''你是一个STEM教育顾问，首先根学生已经学习过的内容和特点总结，然后规划后续30小时课程内容。
+    try:
+        llm = ChatOllama(model="qwen3-vl:235b-cloud", temperature=0.9)
+        result = llm.invoke(f'''你是一个STEM教育顾问，首先根学生已经学习过的内容和特点总结，然后规划后续30小时课程内容。
                         针对的学生职业目标是{career_target}
                         要求在1.构造 2.电路 3.编程 4.智能 5.设计 6.整合 7.创新的七个维度规划课程，
                         在学生已有学习内容基础上，保持平衡，预留须继续学习的空间，引导学生持续续课学习至少120小时。
@@ -301,7 +332,88 @@ def career_planning(student_name: str, career_target: str) -> str:
                         计划用markdown格式输出
                         '''
                         )
-    return result.content
+        markdown_content = result.content
+        
+        # 创建PDF保存目录
+        pdf_dir = "career_plans"
+        if not os.path.exists(pdf_dir):
+            os.makedirs(pdf_dir)
+        
+        # 生成PDF文件名（使用学生姓名和当前时间）
+        timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+        safe_filename = f"{normalize_name(student_name).replace(' ', '_')}_{timestamp}.pdf"
+        pdf_path = os.path.join(pdf_dir, safe_filename)
+        
+        try:
+            # 将markdown转换为HTML
+            html_content = markdown.markdown(markdown_content)
+            
+            # 添加基本样式使PDF看起来更好
+            html_with_style = f"""
+            <!DOCTYPE html>
+            <html>
+            <head>
+                <meta charset="UTF-8">
+                <style>
+                    body {{
+                        font-family: SimSun, serif;
+                        margin: 2cm;
+                        line-height: 1.6;
+                    }}
+                    h1, h2, h3, h4, h5, h6 {{
+                        color: #333333;
+                        margin-top: 1.5em;
+                    }}
+                    h1 {{
+                        text-align: center;
+                        border-bottom: 2px solid #333;
+                        padding-bottom: 0.3em;
+                    }}
+                    h2 {{
+                        border-bottom: 1px solid #ddd;
+                    }}
+                    p {{
+                        text-align: justify;
+                    }}
+                    table {{
+                        border-collapse: collapse;
+                        width: 100%;
+                    }}
+                    th, td {{
+                        border: 1px solid #ddd;
+                        padding: 8px;
+                    }}
+                    th {{
+                        background-color: #f2f2f2;
+                    }}
+                    ul, ol {{
+                        padding-left: 2em;
+                    }}
+                </style>
+            </head>
+            <body>
+                <h1>学生职业规划 - {student_name}</h1>
+                <p><strong>目标职业:</strong> {career_target}</p>
+                <p><strong>生成时间:</strong> {datetime.datetime.now().strftime('%Y年%m月%d日 %H:%M:%S')}</p>
+                {html_content}
+            </body>
+            </html>
+            """
+            
+            # 确保使用正确的WeasyPrint API调用方式
+            # 直接使用HTML类的write_pdf方法并传入文件路径
+            HTML(string=html_with_style).write_pdf(pdf_path)
+            pdf_status = f"PDF已生成并保存至: {pdf_path}"
+        except Exception as pdf_error:
+            pdf_status = f"生成PDF时出错: {str(pdf_error)}"
+        
+        # 返回markdown内容和PDF生成状态
+        return f"{markdown_content}\n\n---\n\n{pdf_status}"
+    except Exception as e:
+        error_msg = str(e)
+        if "Service Temporarily Unavailable" in error_msg or "503" in error_msg:
+            return "AI服务暂时不可用，请稍后再试。"
+        return f"生成职业规划时出错：{error_msg}"
     
 
 tools_list = [get_weather,get_batago_school_address,find_batago_student,generate_summary,career_planning]
@@ -310,19 +422,25 @@ llm = ChatOllama(model="qwen3-vl:235b-cloud", temperature=0).bind_tools(tools_li
 
 #根据提示词调用llm invoke 然后处理, 没找到tool的显示回答的问题
 def llmtool_invoke_tool(str_input: str):
-    result = llm.invoke(str_input)
-    print(result)
-    if isinstance(result, AIMessage) and result.tool_calls:
-        for call in result.tool_calls:
-            tool_result = None
-            if isinstance(call, dict):
-                tool_obj = call.get("tool") or call.get("tool_name") or call.get("name")
-                tool_input = call.get("tool_input") or call.get("input") or call.get("args") or {}
-                tool_callable = globals().get(tool_obj)
-                tool_result = tool_callable.invoke(tool_input)
-                return tool_result
-    else:
-        return result.content
+    try:
+        result = llm.invoke(str_input)
+        print(result)
+        if isinstance(result, AIMessage) and result.tool_calls:
+            for call in result.tool_calls:
+                tool_result = None
+                if isinstance(call, dict):
+                    tool_obj = call.get("tool") or call.get("tool_name") or call.get("name")
+                    tool_input = call.get("tool_input") or call.get("input") or call.get("args") or {}
+                    tool_callable = globals().get(tool_obj)
+                    tool_result = tool_callable.invoke(tool_input)
+                    return tool_result
+        else:
+            return result.content
+    except Exception as e:
+        error_msg = str(e)
+        if "Service Temporarily Unavailable" in error_msg or "503" in error_msg:
+            return "AI服务暂时不可用，请稍后再试。"
+        return f"调用AI模型时出错：{error_msg}"
 
 def chat_fn(message, history):
     # Convert Gradio history to LangChain format
