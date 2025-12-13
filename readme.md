@@ -3,8 +3,14 @@ A STEM course planning agent developed for students at BataGo, a renowned STEM e
 This system utilizes Ollama and LangChain, with the qwen3-vl:235b-cloud model serving as the underlying large language model (LLM).
 
 # Install
+
 pip install -r requirements.txt
 
 # run
+
 python gradiostudentsum.py
 
+# pre-request
+
+ollama pull glm-4.6:cloud
+ollama pull qwen3-vl:235b-cloud
