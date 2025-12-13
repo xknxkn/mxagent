@@ -32,10 +32,16 @@ import stat
 sys.stdout.reconfigure(encoding="utf-8")
 sys.stderr.reconfigure(encoding="utf-8")
 
+# 初始化创建upload文件夹
+UPLOAD_DIR = os.path.join(os.path.dirname(__file__), 'upload')
+if not os.path.exists(UPLOAD_DIR):
+    os.makedirs(UPLOAD_DIR)
+    print(f"已创建upload文件夹: {UPLOAD_DIR}")
+
 # 删除同名学生旧文件的函数
 def clean_old_student_files(student_name):
     """
-    删除指定学生的旧文件，只保留最新的文件
+    删除指定学生的旧文件，只保留最新的Word和PDF文件
     
     Args:
         student_name: 学生姓名
@@ -43,25 +49,32 @@ def clean_old_student_files(student_name):
     Returns:
         dict: 删除的文件信息
     """
+    print(f"\n=== 开始清理学生 '{student_name}' 的旧文件 ===")
+    
     # 定义career_plans目录路径
     CAREER_PLANS_DIR = os.path.join(os.path.dirname(__file__), 'career_plans')
+    print(f"目标目录: {CAREER_PLANS_DIR}")
     
-    # 文件命名规则：学生姓名_年月日_时分秒.docx
-    file_pattern = re.compile(r'^%s_(\d{8})_(\d{6})\.docx$' % re.escape(normalize_name(student_name).replace(' ', '_')))
+    # 使用normalize_name处理学生姓名并替换空格为下划线，与文件名生成逻辑保持一致
+    normalized_name = normalize_name(student_name).replace(' ', '_')
+    file_pattern = re.compile(r'^%s_(\d{8})_(\d{6})\.(docx|pdf)$' % re.escape(normalized_name))
+    print(f"使用的正则表达式: {file_pattern.pattern}")
     
     # 检查目录是否存在
     if not os.path.exists(CAREER_PLANS_DIR):
+        print(f"错误: 目录 {CAREER_PLANS_DIR} 不存在")
         return {
             'student_name': student_name,
             'total_files': 0,
             'deleted_count': 0,
             'deleted_files': [],
-            'kept_file': None
+            'kept_files': {}
         }
     
     # 获取目录中所有文件
     try:
         all_files = os.listdir(CAREER_PLANS_DIR)
+        print(f"目录中共有 {len(all_files)} 个文件")
     except Exception as e:
         print(f"读取目录时出错: {e}")
         return {
@@ -69,63 +82,183 @@ def clean_old_student_files(student_name):
             'total_files': 0,
             'deleted_count': 0,
             'deleted_files': [],
-            'kept_file': None
+            'kept_files': {}
         }
     
     # 收集该学生的所有文件
     student_files = []
     for filename in all_files:
+        # 调试输出：检查每个文件
+        print(f"检查文件: '{filename}'")
         match = file_pattern.match(filename)
         if match:
-            date_str, time_str = match.groups()
-            # 组合成完整的时间字符串
+            date_str, time_str, file_ext = match.groups()
             datetime_str = f'{date_str}{time_str}'
             try:
-                # 转换为datetime对象用于比较
                 file_datetime = datetime.datetime.strptime(datetime_str, '%Y%m%d%H%M%S')
-                student_files.append({
+                file_info = {
                     'filename': filename,
-                    'datetime': file_datetime
-                })
-            except ValueError:
-                # 日期格式不正确，跳过该文件
-                continue
+                    'datetime': file_datetime,
+                    'timestamp': datetime_str,
+                    'ext': file_ext
+                }
+                student_files.append(file_info)
+                print(f"✅ 匹配到学生文件: {filename} (时间: {file_datetime})")
+            except ValueError as e:
+                print(f"❌ 日期格式不正确，跳过: {filename}, 错误: {e}")
+        else:
+            print(f"❌ 不匹配学生文件: {filename}")
     
-    # 如果该学生有多个文件
-    if len(student_files) > 1:
-        # 按时间排序，最新的在前
-        student_files.sort(key=lambda x: x['datetime'], reverse=True)
+    total_files = len(student_files)
+    print(f"共匹配到 {total_files} 个学生文件")
+    
+    if total_files > 0:
+        # 按时间戳分组
+        timestamp_groups = {}
+        for file_info in student_files:
+            if file_info['timestamp'] not in timestamp_groups:
+                timestamp_groups[file_info['timestamp']] = []
+            timestamp_groups[file_info['timestamp']].append(file_info)
         
-        # 保留最新的文件，删除其余的
-        files_to_delete = student_files[1:]
+        print(f"按时间戳分组: {len(timestamp_groups)} 组")
+        for ts, files in timestamp_groups.items():
+            print(f"  时间戳 {ts}: {[f['filename'] for f in files]}")
+        
+        # 获取所有时间戳并按降序排序
+        sorted_timestamps = sorted(timestamp_groups.keys(), reverse=True)
+        print(f"排序后的时间戳: {sorted_timestamps}")
+        
+        # 保留最新时间戳的文件，删除其余的
         deleted_count = 0
         deleted_files = []
+        kept_files = {}
         
-        for file_info in files_to_delete:
-            file_path = os.path.join(CAREER_PLANS_DIR, file_info['filename'])
-            try:
-                os.remove(file_path)
-                deleted_count += 1
-                deleted_files.append(file_info['filename'])
-                print(f"已删除旧文件: {file_info['filename']}")
-            except Exception as e:
-                print(f"删除文件 {file_info['filename']} 失败: {e}")
+        print("\n开始处理文件:")
+        for i, timestamp in enumerate(sorted_timestamps):
+            file_group = timestamp_groups[timestamp]
+            print(f"  组 {i+1}/{len(sorted_timestamps)} (时间戳: {timestamp}): {[f['filename'] for f in file_group]}")
+            
+            if i == 0:  # 最新的时间戳组，保留所有文件
+                print(f"    → 保留最新组的文件")
+                for file_info in file_group:
+                    kept_files[file_info['ext']] = file_info['filename']
+                    print(f"      保留: {file_info['filename']}")
+            else:  # 较旧的时间戳组，删除所有文件
+                print(f"    → 删除旧组的文件")
+                for file_info in file_group:
+                    file_path = os.path.join(CAREER_PLANS_DIR, file_info['filename'])
+                    print(f"      尝试删除: {file_info['filename']}")
+                    try:
+                        if os.path.exists(file_path):
+                            os.remove(file_path)
+                            deleted_count += 1
+                            deleted_files.append(file_info['filename'])
+                            print(f"      ✅ 成功删除: {file_info['filename']}")
+                        else:
+                            print(f"      ❌ 文件不存在: {file_path}")
+                    except Exception as e:
+                        print(f"      ❌ 删除失败: {file_info['filename']}, 错误: {e}")
         
-        return {
+        result = {
             'student_name': student_name,
-            'total_files': len(student_files),
+            'total_files': total_files,
             'deleted_count': deleted_count,
             'deleted_files': deleted_files,
-            'kept_file': student_files[0]['filename']
+            'kept_files': kept_files
         }
+        
+        print(f"\n清理结果摘要:")
+        print(f"  学生: {result['student_name']}")
+        print(f"  总文件数: {result['total_files']}")
+        print(f"  删除文件数: {result['deleted_count']}")
+        print(f"  删除的文件: {result['deleted_files']}")
+        print(f"  保留的文件: {result['kept_files']}")
+        print(f"=== 清理完成 ===")
+        
+        return result
     else:
-        # 没有或只有一个文件，不需要删除
+        print("没有找到匹配的学生文件，不需要清理")
         return {
             'student_name': student_name,
-            'total_files': len(student_files),
+            'total_files': 0,
             'deleted_count': 0,
             'deleted_files': [],
-            'kept_file': student_files[0]['filename'] if student_files else None
+            'kept_files': {}
+        }
+
+# 清理临时文件的函数
+def clean_temp_files():
+    """
+    清理career_plans目录中所有以temp开头的临时文件
+    
+    Returns:
+        dict: 清理结果信息
+    """
+    # 定义career_plans目录路径
+    CAREER_PLANS_DIR = os.path.join(os.path.dirname(__file__), 'career_plans')
+    
+    # 检查目录是否存在
+    if not os.path.exists(CAREER_PLANS_DIR):
+        return {
+            'success': False,
+            'message': f"目录 {CAREER_PLANS_DIR} 不存在",
+            'deleted_count': 0,
+            'total_files_checked': 0,
+            'skipped_files': 0,
+            'failed_files': 0
+        }
+    
+    # 临时文件匹配模式
+    temp_file_pattern = re.compile(r'^temp_.*\.md$')
+    
+    # 初始化统计变量
+    deleted_count = 0
+    skipped_files = 0
+    failed_files = 0
+    total_files = 0
+    
+    try:
+        # 获取目录中所有文件
+        all_files = os.listdir(CAREER_PLANS_DIR)
+        total_files = len(all_files)
+        
+        # 遍历所有文件
+        for filename in all_files:
+            # 检查是否为临时文件
+            if temp_file_pattern.match(filename):
+                file_path = os.path.join(CAREER_PLANS_DIR, filename)
+                try:
+                    # 确保文件存在且是普通文件
+                    if os.path.isfile(file_path):
+                        # 如果是只读文件，修改权限
+                        if not os.access(file_path, os.W_OK):
+                            os.chmod(file_path, stat.S_IWRITE)
+                        # 删除文件
+                        os.remove(file_path)
+                        deleted_count += 1
+                        print(f"[{datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] 已删除临时文件: {filename}")
+                except Exception as e:
+                    failed_files += 1
+                    print(f"[{datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] 删除临时文件 {filename} 失败: {e}")
+            else:
+                skipped_files += 1
+        
+        return {
+            'success': True,
+            'message': f"临时文件清理完成，删除了 {deleted_count} 个文件",
+            'deleted_count': deleted_count,
+            'total_files_checked': total_files,
+            'skipped_files': skipped_files,
+            'failed_files': failed_files
+        }
+    except Exception as e:
+        return {
+            'success': False,
+            'message': f"清理临时文件时出错: {str(e)}",
+            'deleted_count': deleted_count,
+            'total_files_checked': total_files,
+            'skipped_files': skipped_files,
+            'failed_files': failed_files
         }
 
 # 全局变量：存储课程记录表
@@ -622,7 +755,7 @@ def career_planning(student_name: str, career_target: str) -> str:
         joined += t + ' '
         count += len(t) + 1
     try:
-        llm = ChatOllama(model="qwen3-vl:235b-cloud", temperature=0.9)
+        llm = ChatOllama(model="qwen3-vl:235b-cloud", temperature=1)
         result = llm.invoke(f'''你是一个STEM教育顾问，首先根学生已经学习过{total_class_time}课时内容和特点总结，然后规划后续30小时课程内容。
                         针对的学生职业目标是{career_target}
                         要求在1.构造 2.电路 3.编程 4.智能 5.设计 6.整合 7.创新的七个维度规划课程，
@@ -639,11 +772,6 @@ def career_planning(student_name: str, career_target: str) -> str:
         pdf_dir = "career_plans"
         if not os.path.exists(pdf_dir):
             os.makedirs(pdf_dir)
-        
-        # 在生成新文件前，删除该学生的旧文件，只保留最新的
-        print(f"清理学生 {student_name} 的旧文件...")
-        clean_result = clean_old_student_files(student_name)
-        print(f"清理结果: 删除了 {clean_result['deleted_count']} 个旧文件")
         
         # 生成Word文件名（使用学生姓名和当前时间）
         timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
@@ -693,12 +821,22 @@ def career_planning(student_name: str, career_target: str) -> str:
             
             # 使用pypandoc将markdown文件转换为docx
             try:
-                # 设置额外的参数以优化转换
+                # 设置额外的参数以优化转换，确保中文字体为宋体和表格使用细实线
                 extra_args = [
                     '--standalone',
                     '--from=markdown',
                     '--to=docx',
-                    '--wrap=none'
+                    '--wrap=none',
+                    '--variable=mainfont="SimSun"',  # 设置主要字体为宋体
+                    '--variable=fontfamily="SimSun"',  # 设置字体家族为宋体
+                    '--variable=fontsize=12pt',  # 设置字号
+                    '--variable=CJKmainfont="SimSun"',  # 明确设置CJK字体为宋体
+                    '--variable=CJKfontsize=12pt',  # 设置CJK字体大小
+                    '--variable=documentclass=article',
+                    '--variable=mainfontoptions="Mapping=tex-text"',
+                    '--variable=table-border-style="solid"',  # 设置表格边框样式为实线
+                    '--variable=table-border-width="0.5pt"',  # 设置表格边框宽度为细实线
+                    '--variable=table-border-color="black"'  # 设置表格边框颜色为黑色
                 ]
                 
                 pypandoc.convert_file(
@@ -727,8 +865,80 @@ def career_planning(student_name: str, career_target: str) -> str:
             if os.path.exists(docx_path) and os.path.getsize(docx_path) > 0:
                 docx_status = f"Word文档已成功生成并保存至: {docx_path}"
                 print(docx_status)
-                # 返回成功状态和文件路径
-                return {"content": f"{markdown_content}\n\n---\n\n{docx_status}", "file_path": docx_path}
+                
+                # 生成同名PDF文件
+                pdf_path = os.path.splitext(docx_path)[0] + '.pdf'
+                pdf_status = ""
+                try:
+                    # 尝试使用不同的PDF引擎，如果pdflatex不可用
+                    # 首先尝试默认的pdflatex
+                    pdf_extra_args = [
+                        '--standalone',
+                        '--from=markdown',
+                        '--to=pdf',
+                        '--wrap=none'
+                    ]
+                    
+                    # 重新使用之前创建的临时markdown文件（如果它还存在）
+                    # 注意：临时文件会在finally块中删除，但这里我们仍在try块内
+                    if os.path.exists(temp_md_path):
+                        pypandoc.convert_file(
+                            temp_md_path,
+                            'pdf',
+                            outputfile=pdf_path,
+                            extra_args=pdf_extra_args
+                        )
+                        print(f"PDF文档转换成功: {pdf_path}")
+                    else:
+                        # 如果临时文件已经不存在，重新创建
+                        with open(temp_md_path, 'w', encoding='utf-8') as f:
+                            f.write(enhanced_markdown)
+                        pypandoc.convert_file(
+                            temp_md_path,
+                            'pdf',
+                            outputfile=pdf_path,
+                            extra_args=pdf_extra_args
+                        )
+                        print(f"PDF文档转换成功: {pdf_path}")
+                    
+                    # 验证PDF文件是否生成成功
+                    if os.path.exists(pdf_path) and os.path.getsize(pdf_path) > 0:
+                        pdf_status = f"PDF文档已成功生成并保存至: {pdf_path}"
+                        print(pdf_status)
+                    else:
+                        pdf_status = f"警告：PDF文档可能未正确生成或为空: {pdf_path}"
+                        print(pdf_status)
+                except Exception as pdf_error:
+                    error_msg = str(pdf_error)
+                    # 检查是否是pdflatex缺失的错误
+                    if "pdflatex not found" in error_msg.lower() or "exitcode \"47\"" in error_msg:
+                        pdf_status = f"注意：PDF文档生成失败，因为系统中缺少pdflatex。Word文档已成功生成。要生成PDF，请安装LaTeX或选择不同的PDF引擎。"
+                        print(pdf_status)
+                    else:
+                        pdf_status = f"生成PDF文档时出错: {error_msg}"
+                        print(pdf_status)
+                    # 如果PDF文件存在但可能不完整，删除它
+                    if os.path.exists(pdf_path):
+                        try:
+                            os.remove(pdf_path)
+                            print(f"已删除不完整的PDF文件: {pdf_path}")
+                        except:
+                            pass
+                
+                # 清理所有临时文件
+                print(f"执行临时文件清理...")
+                temp_clean_result = clean_temp_files()
+                print(f"临时文件清理结果: {temp_clean_result['message']}")
+                
+                # 在生成完新文件后，删除该学生的旧文件，只保留最新的
+                print(f"清理学生 {student_name} 的旧文件...")
+                clean_result = clean_old_student_files(student_name)
+                print(f"清理结果: 删除了 {clean_result['deleted_count']} 个旧文件")
+                
+                # 组合状态信息
+                combined_status = f"{docx_status}\n{pdf_status}\n\n临时文件清理: {temp_clean_result['message']}\n旧文件清理: 删除了 {clean_result['deleted_count']} 个旧文件"
+                # 返回成功状态和文件路径，包含PDF路径（如果生成成功）
+                return {"content": f"{markdown_content}\n\n---\n\n{combined_status}", "file_path": docx_path, "pdf_path": pdf_path if pdf_status.startswith("PDF文档已成功") else None}
             else:
                 raise Exception(f"生成的Word文档可能为空或未正确创建: {docx_path}")
                 
@@ -737,6 +947,13 @@ def career_planning(student_name: str, career_target: str) -> str:
             docx_status = error_message
             print(error_message)
             
+            # 即使出错也尝试清理临时文件
+            try:
+                print(f"尝试清理临时文件...")
+                clean_temp_files()
+            except:
+                pass
+                
             # 如果pandoc不可用，提供安装指南
             if not pandoc_available:
                 docx_status += "\n\n注意：系统中未检测到pandoc命令行工具。请安装pandoc后重试。"
@@ -744,7 +961,7 @@ def career_planning(student_name: str, career_target: str) -> str:
                 docx_status += "\n安装后可能需要重启计算机以更新环境变量。"
         
         # 返回markdown内容和Word文档生成状态（失败情况）
-        return {"content": f"{markdown_content}\n\n---\n\n{docx_status}", "file_path": None}
+        return {"content": f"{markdown_content}\n\n---\n\n{docx_status}", "file_path": None, "pdf_path": None}
     except Exception as e:
         error_msg = str(e)
         if "Service Temporarily Unavailable" in error_msg or "503" in error_msg:
@@ -788,10 +1005,23 @@ def llmtool_invoke_tool(str_input: str):
                         if file_path and os.path.exists(file_path):
                             file_name = os.path.basename(file_path)
                             # 在Gradio中，文件会自动提供下载链接
-                            content += f"\n\n---\n\n📄 **Word文档下载信息**\n"
+                            content += f"\n\n---\n\n📄 **文档下载信息**\n"
+                            
+                            # Word文档信息
+                            content += f"**Word文档:**\n"
                             content += f"- 文件名: {file_name}\n"
                             content += f"- 保存位置: {file_path}\n"
                             content += f"- 大小: {os.path.getsize(file_path) / 1024:.1f} KB\n"
+                            
+                            # PDF文档信息（如果有）
+                            pdf_path = tool_result.get('pdf_path')
+                            if pdf_path and os.path.exists(pdf_path):
+                                pdf_name = os.path.basename(pdf_path)
+                                content += f"\n**PDF文档:**\n"
+                                content += f"- 文件名: {pdf_name}\n"
+                                content += f"- 保存位置: {pdf_path}\n"
+                                content += f"- 大小: {os.path.getsize(pdf_path) / 1024:.1f} KB\n"
+                            
                             content += f"\n💡 **提示**: 文件已生成在系统的career_plans目录中，您可以直接访问该目录查看和打开文件。"
                         
                         return content
@@ -843,6 +1073,60 @@ def chat_fn(message, history):
     result = llmtool_invoke_tool(history_langchain)
     return result
 
+def upload_file(files):
+    """处理文件上传到upload文件夹，同名文件直接覆盖"""
+    if not files:
+        return "未选择文件"
+    
+    # 确保files是列表格式（Gradio在multiple模式下可能传递单个文件）
+    if not isinstance(files, list):
+        files = [files]
+    
+    results = []
+    for file in files:
+        try:
+            # 获取目标文件路径
+            # 对于NamedString对象，可能需要直接使用其值作为文件名
+            if hasattr(file, 'name'):
+                filename = os.path.basename(file.name)
+            else:
+                # 如果没有name属性，使用默认名称
+                filename = "uploaded_file"
+            
+            target_path = os.path.join(UPLOAD_DIR, filename)
+            
+            # 根据文件对象类型选择不同的读取方式
+            if hasattr(file, 'read'):
+                # 标准文件对象，有read方法
+                content = file.read()
+            else:
+                # 对于NamedString或其他类似对象，尝试直接使用其值
+                # 假设file本身就是内容或有data属性
+                if hasattr(file, 'data'):
+                    content = file.data
+                else:
+                    # 最后的尝试，将file转换为bytes
+                    content = str(file).encode('utf-8')
+            
+            # 保存文件内容
+            with open(target_path, "wb") as f:
+                # 确保写入的是bytes类型
+                if isinstance(content, str):
+                    f.write(content.encode('utf-8'))
+                else:
+                    f.write(content)
+            
+            results.append(f"上传成功: {filename}")
+        except Exception as e:
+            # 错误处理时确保能够获取文件名
+            try:
+                filename = os.path.basename(file.name) if hasattr(file, 'name') else str(file)
+            except:
+                filename = "未知文件"
+            results.append(f"上传失败 {filename}: {str(e)}")
+    
+    return "\n".join(results)
+
 # 使用Blocks API创建更复杂的界面
 demo = gr.Blocks(title="学生发展STEM课程规划助手")
 
@@ -850,7 +1134,7 @@ def set_api_key(api_key: str):
     """Set the TAVILY_API_KEY in environment and reveal the main UI when valid."""
     key = (api_key or "").strip()
     if not key:
-        return "请提供有效的 TAVILY_API_KEY", gr.update(visible=True), gr.update(visible=False), gr.update(visible=False)
+        return "请提供有效的 TAVILY_API_KEY", gr.update(visible=True), gr.update(visible=False), gr.update(visible=True), gr.update(visible=False)
 
     # 尝试验证该 key 是否可用（调用 Tavily 的简单搜索接口）
     try:
@@ -861,7 +1145,7 @@ def set_api_key(api_key: str):
         if resp is None:
             raise ValueError("空响应")
     except Exception as e:
-        return f"API Key 验证失败：{e}", gr.update(visible=True), gr.update(visible=True), gr.update(visible=False)
+        return f"API Key 验证失败：{e}", gr.update(visible=True), gr.update(visible=True), gr.update(visible=True), gr.update(visible=False)
 
     # 验证通过，设置环境变量并显示主界面
     os.environ["TAVILY_API_KEY"] = key
@@ -869,11 +1153,11 @@ def set_api_key(api_key: str):
         save_api_key(key)
     except Exception:
         pass
-    return "已设置 TAVILY_API_KEY，界面已解锁", gr.update(visible=False), gr.update(visible=False), gr.update(visible=True)
+    return "已设置 TAVILY_API_KEY，界面已解锁", gr.update(visible=False), gr.update(visible=False), gr.update(visible=True), gr.update(visible=True)
 
 def skip_api_key():
     """Skip API key validation and show main UI without search capability."""
-    return "跳过验证，后续对话不支持联网搜索", gr.update(visible=False), gr.update(visible=False), gr.update(visible=True)
+    return "跳过验证，后续对话不支持联网搜索", gr.update(visible=False), gr.update(visible=False), gr.update(visible=False), gr.update(visible=True)
 
 with demo:
     # 数据警告容器，如果数据较旧则显示
@@ -885,20 +1169,37 @@ with demo:
     gr.Markdown("# 学生职业规划助手")
     gr.Markdown("欢迎使用倍塔狗人工智能职业规划助手，您可以在这里咨询在倍塔狗在什么时间段学习了什么，给出自己的职业目标，根据职业目标规划后续课程。")
 
+    # 文件上传组件 - 移到API Key输入区域之前，始终可见
+    with gr.Column() as upload_container:
+        gr.Markdown("### 文件上传")
+        with gr.Row():
+            file_output = gr.Textbox(label="文件上传状态", interactive=False)
+        
+        with gr.Row():
+            file_input = gr.File(label="上传文件到upload文件夹", file_count="multiple")
+            upload_btn = gr.Button("开始上传")
+        
+        upload_btn.click(fn=upload_file, inputs=file_input, outputs=file_output)
+
     # 初始 API Key 输入区（可见）
     with gr.Column() as api_container:
         gr.Markdown("### 请先输入 TAVILY_API_KEY")
         api_key_input = gr.Textbox(label="TAVILY_API_KEY", placeholder="在此粘贴你的 TAVILY_API_KEY", interactive=True)
         api_status = gr.Textbox(label="状态", interactive=False)
-        api_submit = gr.Button("提交并继续")
         
-        # 跳过验证容器，默认隐藏
+        # 添加跳过按钮，始终可见
+        gr.Markdown("*如果暂时不需要联网搜索功能，可以跳过此步骤*")
+        with gr.Row():
+            api_submit = gr.Button("提交并继续")
+            skip_button = gr.Button("跳过")
+        
+        # 跳过验证容器，默认隐藏（保留以备后用）
         with gr.Column(visible=False) as skip_container:
             gr.Markdown("**验证失败，是否跳过此步骤？**")
             gr.Markdown("*跳过后，后续对话将不支持联网搜索，且配置文件不会更新。*")
-            skip_button = gr.Button("跳过验证")
+            # 这个按钮可以保留，当验证失败时显示
 
-    # 主界面容器，默认隐藏，提交 API Key 后显示
+    # 主界面容器，默认隐藏，提交 API Key 或跳过验证后显示
     with gr.Column(visible=False) as main_container:
         # 创建聊天界面
         chat_interface = gr.ChatInterface(fn=chat_fn)
@@ -918,6 +1219,6 @@ with demo:
     api_submit.click(fn=set_api_key, inputs=api_key_input, outputs=[api_status, api_container, skip_container, main_container])
     
     # 绑定跳过按钮
-    skip_button.click(fn=skip_api_key, inputs=[], outputs=[api_status, api_container, skip_container, main_container])
+    skip_button.click(fn=skip_api_key, inputs=[], outputs=[api_status, api_container, skip_container, upload_container, main_container])
 
 demo.launch()
