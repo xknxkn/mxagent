@@ -2,6 +2,7 @@
 from langchain_core.tools import tool
 from langchain.messages import AIMessage
 from langchain_ollama import ChatOllama
+import os
 from tavily import TavilyClient
 import sys, io
 
@@ -18,7 +19,10 @@ except Exception:
 @tool
 def tavily_search(query: str) -> str:
     """Use this tool to search the web for recent information."""
-    client = TavilyClient("tvly-dev-xxxxxxxxx") # replace with your Tavily API key
+    api_key = os.environ.get("TAVILY_API_KEY")
+    if not api_key:
+        return "TAVILY_API_KEY 未配置，请先在 UI 中设置后重试。"
+    client = TavilyClient(api_key)
     response = client.search(
         query=query,
         max_results=1

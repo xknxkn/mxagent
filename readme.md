@@ -8,7 +8,7 @@ pip install -r requirements.txt
 
 # run
 
-python gradiostudentsum.py
+python batago.py
 
 # pre-request
 

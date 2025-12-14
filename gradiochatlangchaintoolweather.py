@@ -1,6 +1,7 @@
 from langchain_ollama import ChatOllama
 from langchain_core.messages import HumanMessage, AIMessage,SystemMessage
 from langchain.tools import tool
+import os
 from tavily import TavilyClient
 from typing import List
 from pypinyin import lazy_pinyin
@@ -21,7 +22,10 @@ sys.stderr.reconfigure(encoding="utf-8")
 
 def tavily_search(query: str) -> str:
     """Use this tool to search the web for recent information."""
-    client = TavilyClient("tvly-dev-xxxxxxx") # replace with your Tavily API key
+    api_key = os.environ.get("TAVILY_API_KEY")
+    if not api_key:
+        return "TAVILY_API_KEY 未配置，请先在 UI 中设置后重试。"
+    client = TavilyClient(api_key)
     response = client.search(
         query=query,
         max_results=1

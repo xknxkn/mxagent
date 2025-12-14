@@ -21,10 +21,55 @@ import pandas as pd
 import unicodedata
 import re
 import os
+import json
+from pathlib import Path
 
 # 打印显示中文
 sys.stdout.reconfigure(encoding="utf-8")
 sys.stderr.reconfigure(encoding="utf-8")
+
+# Try to load saved TAVILY_API_KEY from local config if environment variable not set
+def _get_config_path() -> Path:
+    return Path(os.path.expanduser('~')) / '.batago_config.json'
+
+
+def load_saved_api_key() -> str | None:
+    cfg = _get_config_path()
+    try:
+        if cfg.exists():
+            with open(cfg, 'r', encoding='utf-8') as f:
+                data = json.load(f)
+                key = data.get('TAVILY_API_KEY')
+                return key
+    except Exception:
+        return None
+    return None
+
+
+def save_api_key(key: str) -> None:
+    cfg = _get_config_path()
+    try:
+        cfg.parent.mkdir(parents=True, exist_ok=True)
+        with open(cfg, 'w', encoding='utf-8') as f:
+            json.dump({'TAVILY_API_KEY': key}, f)
+        # Try to restrict permissions (best-effort)
+        try:
+            if os.name != 'nt':
+                cfg.chmod(0o600)
+        except Exception:
+            pass
+    except Exception:
+        # ignore persistence errors
+        pass
+
+
+# 确保在程序启动时正确从配置文件加载API密钥到环境变量
+saved = load_saved_api_key()
+if saved:
+    os.environ["TAVILY_API_KEY"] = saved
+    print(f"TAVILY_API_KEY已从配置文件加载")
+else:
+    print(f"未找到保存的TAVILY_API_KEY")
 
 # 删除同名学生旧文件的函数
 def clean_old_student_files(student_name):
@@ -210,10 +255,52 @@ def load_excel_data():
 
 # 初始化加载数据
 load_excel_data()
+def set_tavily_api_key(api_key: str) -> str:
+    """设置TAVILY_API_KEY并保存到环境变量和配置文件"""
+    key = (api_key or "").strip()
+    if not key:
+        return "请提供有效的 TAVILY_API_KEY"
+
+    # 尝试验证该 key 是否可用（调用 Tavily 的简单搜索接口）
+    try:
+        test_client = TavilyClient(key)
+        # 使用一个无害的查询进行验证
+        resp = test_client.search(query="验证TAVILY_API_KEY是否有效: 测试", max_results=1)
+        # 如果返回包含错误字段或抛异常会被捕获
+        if resp is None:
+            raise ValueError("空响应")
+    except Exception as e:
+        print(f"API Key验证失败: {e}")
+        return f"API Key 验证失败：{e}"
+
+    # 验证通过，设置环境变量并保存到配置文件
+    try:
+        # 确保环境变量被设置
+        os.environ["TAVILY_API_KEY"] = key
+        print(f"TAVILY_API_KEY已设置到环境变量")
+        
+        # 尝试保存到配置文件
+        config_path = _get_config_path()
+        try:
+            cfg = _get_config_path()
+            cfg.parent.mkdir(parents=True, exist_ok=True)
+            with open(cfg, 'w', encoding='utf-8') as f:
+                json.dump({'TAVILY_API_KEY': key}, f)
+            print(f"TAVILY_API_KEY已保存到配置文件: {config_path}")
+            return "TAVILY_API_KEY 已成功设置并保存，程序将在下次启动时自动加载。"
+        except Exception as save_error:
+            print(f"保存API密钥失败: {save_error}")
+            return f"TAVILY_API_KEY 已设置但保存失败: {save_error}，程序重启后需要重新输入。"
+    except Exception as e:
+        print(f"设置API密钥时出错: {e}")
+        return f"设置API密钥时出错: {e}"
+
 def tavily_search(query: str) -> str:
     """Use this tool to search the web for recent information."""
-    # 从环境变量获取API密钥，如果未设置则使用默认值
-    api_key = os.environ.get("TAVILY_API_KEY", "tvly-dev-xxxxxxx")
+    # 从环境变量获取API密钥，若未设置则返回提示
+    api_key = os.environ.get("TAVILY_API_KEY")
+    if not api_key:
+        return "TAVILY_API_KEY 未配置，请先在界面中设置API密钥后重试。"
     client = TavilyClient(api_key)
     try:
         response = client.search(
@@ -544,12 +631,12 @@ def career_planning(student_name: str, career_target: str) -> str:
     student_df = df[df['学生姓名_标准'] == target]
     if student_df.empty:
         candidates = list(df['学生姓名'].dropna().astype(str).unique()[:200])
-        return f'未找到学生 {student_name} 的记录。数据中可选学生（最多200个显示）: {"、".join(candidates)}'
+        return f'未找到学生 {correct_student_name} 的记录。数据中可选学生（最多200个显示）: {"、".join(candidates)}'
     
     sel = student_df
     contents = sel['内容'].dropna().astype(str).tolist()
     if not contents:
-        return f"{student_name} 没有课程'内容'进行分析。"
+        return f"{correct_student_name} 没有课程'内容'进行分析。"
     
     #在sel里面找到第一次上课时间和最近一次上课时间
     first_class_time=sel['上课时间'].min().strftime('%Y年%m月%d日') if not sel['上课时间'].empty else '无记录'
@@ -586,13 +673,13 @@ def career_planning(student_name: str, career_target: str) -> str:
             os.makedirs(pdf_dir)
         
         # 在生成新文件前，删除该学生的旧文件，只保留最新的
-        print(f"清理学生 {student_name} 的旧文件...")
-        clean_result = clean_old_student_files(student_name)
+        print(f"清理学生 {correct_student_name} 的旧文件...")
+        clean_result = clean_old_student_files(correct_student_name)
         print(f"清理结果: 删除了 {clean_result['deleted_count']} 个旧文件")
         
         # 生成Word文件名（使用学生姓名和当前时间）
         timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
-        safe_filename = f"{normalize_name(student_name).replace(' ', '_')}_{timestamp}.docx"
+        safe_filename = f"{normalize_name(correct_student_name).replace(' ', '_')}_{timestamp}.docx"
         docx_path = os.path.join(pdf_dir, safe_filename)
         
         # 检查pandoc是否安装
@@ -607,7 +694,7 @@ def career_planning(student_name: str, career_target: str) -> str:
         
         try:
             # 在markdown内容前添加标题和元信息
-            enhanced_markdown = f"""# 倍塔狗人工智能课程规划 - {student_name}
+            enhanced_markdown = f"""# 倍塔狗人工智能课程规划 - {correct_student_name}
 
 ## 基本信息
 
@@ -638,12 +725,15 @@ def career_planning(student_name: str, career_target: str) -> str:
             
             # 使用pypandoc将markdown文件转换为docx
             try:
-                # 设置额外的参数以优化转换
+                # 设置额外的参数以优化转换，包括设置字体为宋体
                 extra_args = [
                     '--standalone',
-                    '--from=markdown',
+                    '--from=markdown+smart',
                     '--to=docx',
-                    '--wrap=none'
+                    '--wrap=none',
+                    '--variable=mainfont="SimSun"',  # 设置主要字体为宋体
+                    '--variable=fontfamily="SimSun"',  # 设置字体家族为宋体
+                    '--variable=fontsize=12pt'  # 设置字号
                 ]
                 
                 pypandoc.convert_file(
@@ -672,8 +762,53 @@ def career_planning(student_name: str, career_target: str) -> str:
             if os.path.exists(docx_path) and os.path.getsize(docx_path) > 0:
                 docx_status = f"Word文档已成功生成并保存至: {docx_path}"
                 print(docx_status)
+                
+                # 生成同名的PDF文件
+                pdf_path = os.path.splitext(docx_path)[0] + '.pdf'
+                pdf_status = ""
+                try:
+                    # 使用pypandoc将markdown转换为PDF
+                    extra_args_pdf = [
+                        '--standalone',
+                        '--from=markdown+smart',
+                        '--to=pdf',
+                        '--wrap=none'
+                    ]
+                    
+                    pypandoc.convert_file(
+                        temp_md_path,
+                        'pdf',
+                        outputfile=pdf_path,
+                        extra_args=extra_args_pdf
+                    )
+                    
+                    if os.path.exists(pdf_path) and os.path.getsize(pdf_path) > 0:
+                        pdf_status = f"PDF文档已成功生成并保存至: {pdf_path}"
+                        print(pdf_status)
+                    else:
+                        pdf_status = f"警告: 生成的PDF文档可能为空或未正确创建: {pdf_path}"
+                        print(pdf_status)
+                        
+                except Exception as pdf_error:
+                    error_msg = str(pdf_error)
+                    # 检查是否是pdflatex缺失的错误
+                    if "pdflatex not found" in error_msg.lower() or "exitcode \"47\"" in error_msg:
+                        pdf_status = f"注意：PDF文档生成失败，因为系统中缺少pdflatex。Word文档已成功生成。要生成PDF，请安装LaTeX或选择不同的PDF引擎。"
+                        print(pdf_status)
+                    else:
+                        pdf_status = f"生成PDF文档时出错: {error_msg}"
+                        print(pdf_status)
+                    # 如果PDF文件存在但可能不完整，删除它
+                    if os.path.exists(pdf_path):
+                        try:
+                            os.remove(pdf_path)
+                            print(f"已删除不完整的PDF文件: {pdf_path}")
+                        except:
+                            pass
+                
                 # 返回成功状态和文件路径
-                return {"content": f"{markdown_content}\n\n---\n\n{docx_status}", "file_path": docx_path}
+                combined_status = f"{docx_status}\n{pdf_status}"
+                return {"content": f"{markdown_content}\n\n---\n\n{combined_status}", "file_path": docx_path, "pdf_path": pdf_path if pdf_status.startswith("PDF文档已成功") else None}
             else:
                 raise Exception(f"生成的Word文档可能为空或未正确创建: {docx_path}")
                 
@@ -733,10 +868,18 @@ def llmtool_invoke_tool(str_input: str):
                         if file_path and os.path.exists(file_path):
                             file_name = os.path.basename(file_path)
                             # 在Gradio中，文件会自动提供下载链接
-                            content += f"\n\n---\n\n📄 **Word文档下载信息**\n"
-                            content += f"- 文件名: {file_name}\n"
-                            content += f"- 保存位置: {file_path}\n"
-                            content += f"- 大小: {os.path.getsize(file_path) / 1024:.1f} KB\n"
+                            content += f"\n\n---\n\n📄 **文档下载信息**\n"
+                            content += f"- Word文件名: {file_name}\n"
+                            content += f"- Word文件保存位置: {file_path}\n"
+                            content += f"- Word文件大小: {os.path.getsize(file_path) / 1024:.1f} KB\n"
+                            
+                            # 添加PDF文件信息（如果有）
+                            if 'pdf_path' in tool_result and tool_result['pdf_path'] and os.path.exists(tool_result['pdf_path']):
+                                pdf_file_name = os.path.basename(tool_result['pdf_path'])
+                                content += f"- PDF文件名: {pdf_file_name}\n"
+                                content += f"- PDF文件保存位置: {tool_result['pdf_path']}\n"
+                                content += f"- PDF文件大小: {os.path.getsize(tool_result['pdf_path']) / 1024:.1f} KB\n"
+                            
                             content += f"\n💡 **提示**: 文件已生成在系统的career_plans目录中，您可以直接访问该目录查看和打开文件。"
                         
                         return content
@@ -776,6 +919,29 @@ def open_career_plans_folder():
     except Exception as e:
         return f"打开文件夹失败：{str(e)}"
 
+def open_summary_plans_folder():
+    """打开summary_plans文件夹"""
+    try:
+        # 获取当前脚本所在目录
+        current_dir = os.path.dirname(os.path.abspath(__file__))
+        # 构建summary_plans文件夹路径
+        folder_path = os.path.join(current_dir, "summary_plans")
+        
+        # 确保文件夹存在
+        if not os.path.exists(folder_path):
+            os.makedirs(folder_path)
+            return f"文件夹已创建：{folder_path}"
+        
+        # 根据操作系统打开文件夹
+        if os.name == 'nt':  # Windows
+            os.startfile(folder_path)
+        elif os.name == 'posix':  # macOS or Linux
+            subprocess.run(['open', folder_path])  # macOS
+        
+        return f"正在打开文件夹：{folder_path}"
+    except Exception as e:
+        return f"打开文件夹失败：{str(e)}"
+
 def chat_fn(message, history):
     # Convert Gradio history to LangChain format
     history_langchain = [
@@ -795,15 +961,25 @@ with demo:
     gr.Markdown("# 学生职业规划助手")
     gr.Markdown("欢迎使用倍塔狗人工智能职业规划助手，您可以在这里咨询在倍塔狗在什么时间段学习了什么，给出自己的职业目标，根据职业目标规划后续课程。")
     
+    # 添加API密钥设置区域
+    with gr.Accordion("API密钥设置", open=False):
+        gr.Markdown("请输入您的TAVILY_API_KEY以启用网络搜索功能。设置后将保存到本地配置文件中。")
+        api_key_input = gr.Textbox(label="TAVILY_API_KEY", placeholder="在此粘贴您的TAVILY_API_KEY", type="password", interactive=True)
+        api_submit_btn = gr.Button("保存API密钥")
+        api_status = gr.Textbox(label="API密钥状态", interactive=False)
+    
     # 创建聊天界面
     chat_interface = gr.ChatInterface(fn=chat_fn)
     
     # 添加打开文件夹按钮
     with gr.Row():
         open_folder_btn = gr.Button("📁 打开career_plans文件夹")
+        open_summary_btn = gr.Button("📁 打开summary_plans文件夹")
         status_message = gr.Textbox(label="操作状态", interactive=False)
     
     # 设置按钮点击事件
     open_folder_btn.click(fn=open_career_plans_folder, outputs=status_message)
+    open_summary_btn.click(fn=open_summary_plans_folder, outputs=status_message)
+    api_submit_btn.click(fn=set_tavily_api_key, inputs=api_key_input, outputs=api_status)
 
 demo.launch()
