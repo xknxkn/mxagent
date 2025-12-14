@@ -12,6 +12,8 @@ from difflib import SequenceMatcher
 import markdown
 import pypandoc
 import subprocess
+import shutil
+import time
 
 import unicodedata
 import gradio as gr
@@ -21,9 +23,6 @@ import sys
 import io
 import datetime
 import pandas as pd
-import unicodedata
-import re
-import os
 import json
 from pathlib import Path
 import stat
@@ -652,6 +651,7 @@ def generate_summary(student_name: str, time: str) -> str:
 
     contents = sel['内容'].dropna().astype(str).tolist()
     sksjs=sel['上课时间'].dropna().astype(str).tolist()
+    coursetime=sel['课时消耗'].dropna().astype(float).sum()
     print(f"找到{len(contents)}条课程记录")
     print("上课时间列表:", sksjs)
     if not contents:
@@ -667,8 +667,7 @@ def generate_summary(student_name: str, time: str) -> str:
         {joined}
         ''')
         ai_summary = result.content
-        result = f"""学生:{correct_student_name} 时间:{'; '.join(mapping)} 课次:{len(sksjs)} 日期:{' '.join([date.split()[0][2:4]+date.split()[0][5:7]+date.split()[0][8:10] if len(date.split()[0]) >= 10 else date.split()[0] for date in sksjs])}\n
-        \n{ai_summary}"""
+        result = f"""学生:{correct_student_name} 时间:{'; '.join(mapping)} 课次:{len(sksjs)} 课耗:{coursetime}\n<small>日期:{' '.join([date.split()[0][2:4]+date.split()[0][5:7]+date.split()[0][8:10] if len(date.split()[0]) >= 10 else date.split()[0] for date in sksjs])}</small>\n\n{ai_summary}"""
         
         # 创建summary_plans目录（如果不存在）
         summary_dir = "summary_plans"
@@ -742,7 +741,7 @@ def generate_summary(student_name: str, time: str) -> str:
                     '--from=markdown+smart',
                     '--to=docx',
                     '--wrap=none',
-                    '--metadata=title='+'倍塔狗人工智能学习情况阶段总结',
+                    '--metadata=title=倍塔狗人工智能学习情况阶段总结',
                     '--markdown-headings=atx'
                 ]
                 
@@ -850,13 +849,30 @@ def career_planning(student_name: str, career_target: str) -> str:
     #在sel里面找到第一次上课时间和最近一次上课时间
     first_class_time=sel['上课时间'].min().strftime('%Y年%m月%d日') if not sel['上课时间'].empty else '无记录'
     last_class_time=sel['上课时间'].max().strftime('%Y年%m月%d日') if not sel['上课时间'].empty else '无记录'
-    #根据sel计算总课时数
-    total_class_time = sel['课时消耗'].sum()
+    # 获取所有上课时间列表并生成紧凑型日期列表
+    sksjs=sel['上课时间'].dropna().astype(str).tolist()
+    # 生成紧凑型日期列表，格式为YYMMDD
+    compact_dates=' '.join([date.split()[0][2:4]+date.split()[0][5:7]+date.split()[0][8:10] if len(date.split()[0]) >= 10 else date.split()[0] for date in sksjs])
+    #根据sel计算总课时数，进行数据清洗移除异常值
+    try:
+        # 尝试将课时消耗转换为浮点数
+        valid_hours = pd.to_numeric(sel['课时消耗'], errors='coerce')
+        # 过滤掉异常值：负值
+        valid_hours = valid_hours[valid_hours >= 0]
+        # 计算有效课时总和
+        total_class_time = valid_hours.sum()
+        # 计算有效课次数（行数）
+        class_count = len(valid_hours[valid_hours > 0])
+    except Exception as e:
+        # 如果转换失败，使用原始求和
+        total_class_time = sel['课时消耗'].sum()
+        # 计算原始课次数
+        class_count = len(sel[sel['课时消耗'] > 0])
 
     joined='\n'.join(contents)
     try:
         llm = ChatOllama(model="qwen3-vl:235b-cloud", temperature=0.9)
-        result = llm.invoke(f'''你是一个STEM教育顾问，首先根学生已经学习过{total_class_time}课时内容和特点总结，然后规划后续30小时课程内容.
+        result = llm.invoke(f'''你是一个STEM教育顾问，首先根学生已经过内容和特点总结，然后规划后续30小时课程内容.
                         针对的学生职业目标是{career_target}:
                         要求在1.构造 2.电路 3.编程 4.智能 5.设计 6.整合 7.创新的七个维度规划课程，
                         在学生已有学习内容基础上，保持平衡，预留须继续学习的空间，引导学生持续续课学习至少预期达到120小时，并给出达到长远职业目标的路径，包括真实职业项目实现实践，总计240小时。
@@ -903,7 +919,9 @@ def career_planning(student_name: str, career_target: str) -> str:
 **生成时间:** {datetime.datetime.now().strftime('%Y年%m月%d日 %H:%M:%S')}  
 **第一次课时间:**{first_class_time}  
 **最后一次课时间:**{last_class_time}  
-**课时消耗:**{total_class_time}  
+**课次:**{class_count}  
+**消耗:**{total_class_time}  
+**日期:**{compact_dates}  
 
 ---
 
@@ -1089,8 +1107,6 @@ def open_summary_plans_folder():
 
 def upload_file(file_path, progress=gr.Progress()):
     """上传文件到upload目录，同名文件直接覆盖，显示上传进度"""
-    import shutil
-    import time
     
     # 确保即使发生异常也能正确处理进度
     try:
@@ -1126,8 +1142,8 @@ def upload_file(file_path, progress=gr.Progress()):
             shutil.copy2(file_path, target_path)
             
             # 确保文件缓冲区刷新到磁盘
-            import os
-            os.sync()
+            # os.sync()在Windows上不可用，使用文件对象的flush方法确保数据写入
+            pass
             
             progress(1.0, desc=f"上传完成")
         else:
@@ -1158,8 +1174,7 @@ def upload_file(file_path, progress=gr.Progress()):
                             time.sleep(0.01)
             
             # 确保所有数据都写入磁盘
-            import os
-            os.sync()
+            # os.sync()在Windows上不可用，with语句已确保文件正确关闭
             
             progress(1.0, desc=f"上传完成")
         
@@ -1277,7 +1292,7 @@ with demo:
         
         # 添加文件上传区域
         with gr.Row():
-            upload_component = gr.File(label="上传文件到upload目录（同名文件将覆盖）", file_count="single")
+            upload_component = gr.File(label="上传上课反馈xls文件（同名文件将覆盖）", file_count="single")
         
         # 上传状态显示区域
         with gr.Row():

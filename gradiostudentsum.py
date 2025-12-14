@@ -641,8 +641,25 @@ def career_planning(student_name: str, career_target: str) -> str:
     #在sel里面找到第一次上课时间和最近一次上课时间
     first_class_time=sel['上课时间'].min().strftime('%Y年%m月%d日') if not sel['上课时间'].empty else '无记录'
     last_class_time=sel['上课时间'].max().strftime('%Y年%m月%d日') if not sel['上课时间'].empty else '无记录'
-    #根据sel计算总课时数
-    total_class_time = sel['课时消耗'].sum()
+    # 获取所有上课时间列表并生成紧凑型日期列表
+    sksjs=sel['上课时间'].dropna().astype(str).tolist()
+    # 生成紧凑型日期列表，格式为YYMMDD
+    compact_dates=' '.join([date.split()[0][2:4]+date.split()[0][5:7]+date.split()[0][8:10] if len(date.split()[0]) >= 10 else date.split()[0] for date in sksjs])
+    #根据sel计算总课时数，进行数据清洗移除异常值
+    try:
+        # 尝试将课时消耗转换为浮点数
+        valid_hours = pd.to_numeric(sel['课时消耗'], errors='coerce')
+        # 过滤掉异常值：负值
+        valid_hours = valid_hours[valid_hours >= 0]
+        # 计算有效课时总和
+        total_class_time = valid_hours.sum()
+        # 计算有效课次数（行数）
+        class_count = len(valid_hours[valid_hours > 0])
+    except Exception as e:
+        # 如果转换失败，使用原始求和
+        total_class_time = sel['课时消耗'].sum()
+        # 计算原始课次数
+        class_count = len(sel[sel['课时消耗'] > 0])
 
     # limit length
     max_chars = 6000
@@ -702,7 +719,9 @@ def career_planning(student_name: str, career_target: str) -> str:
 **生成时间:** {datetime.datetime.now().strftime('%Y年%m月%d日 %H:%M:%S')}  
 **第一次课时间:**{first_class_time}  
 **最后一次课时间:**{last_class_time}  
+**课次:**{class_count}  
 **课时消耗:**{total_class_time}  
+<small>日期:{compact_dates}</small>
 
 ---
 

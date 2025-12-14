@@ -10,4 +10,5 @@ pypinyin==0.55.0
 rapidfuzz==3.14.3
 tavily_python==0.7.14
 markdown==3.5.1
+pypandoc==1.13
 weasyprint==59.0
