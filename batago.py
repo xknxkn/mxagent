@@ -572,6 +572,10 @@ def generate_summary(student_name: str, time: str) -> str:
         if not s:
             return ('默认:上个季度', quarter_bounds(now, -1))
         
+        # 检查是否为'所有'、'全部'、'完整'、'完全'等特殊关键词
+        if re.search(r'所有|全部|完整|完全', s):
+            return ('所有', (None, None))  # 使用None作为特殊标记
+        
         # 按优先级检查时间范围，一旦匹配就立即返回
         if re.search(r'最近一周|近一周|上周', s):
             return ('最近一周', (now - datetime.timedelta(days=7), now))
@@ -637,8 +641,16 @@ def generate_summary(student_name: str, time: str) -> str:
         sname, (start, end) = signal
         print("generate_summary signal", sname)
         print("generate_summary start", start, "end", end)
-        # 定义mapping变量，与langcchaincourse.py保持一致的格式
-        mapping = [f"{sname} -> {start.date()} ~ {end.date()}"]
+        
+        # 特殊处理'所有'时间范围
+        if sname == '所有':
+            # 根据student_df里面的上课时间最早和最晚确定start和end
+            start = student_df['上课时间'].min()
+            end = student_df['上课时间'].max()
+            mapping = [f"所有时间 -> {start.date()} ~ {end.date()}"]
+        else:
+            # 定义mapping变量，与langcchaincourse.py保持一致的格式
+            mapping = [f"{sname} -> {start.date()} ~ {end.date()}"]
     except Exception as e:
         print(f"时间解析错误: {e}")
         # 设置默认值以确保mapping变量始终被定义
@@ -667,7 +679,40 @@ def generate_summary(student_name: str, time: str) -> str:
         {joined}
         ''')
         ai_summary = result.content
-        result = f"""学生:{correct_student_name} 时间:{'; '.join(mapping)} 课次:{len(sksjs)} 课耗:{coursetime}\n<small>日期:{' '.join([date.split()[0][2:4]+date.split()[0][5:7]+date.split()[0][8:10] if len(date.split()[0]) >= 10 else date.split()[0] for date in sksjs])}</small>\n\n{ai_summary}"""
+        # 生成日期列表并按从近到远排序
+        def parse_date(date_str):
+            """解析日期字符串为datetime对象以便排序"""
+            try:
+                # 假设日期格式为 YYYY-MM-DD
+                if len(date_str) >= 10:
+                    year = int(date_str[:4])
+                    month = int(date_str[5:7])
+                    day = int(date_str[8:10])
+                    return (year, month, day)
+            except:
+                pass
+            return (0, 0, 0)  # 解析失败时返回默认值
+        
+        # 提取日期并排序（从近到远，即降序）
+        sorted_dates = sorted(sksjs, key=lambda x: parse_date(x.split()[0]), reverse=True)
+        
+        # 格式化排序后的日期
+        date_list = ' '.join([date.split()[0][2:4]+date.split()[0][5:7]+date.split()[0][8:10] if len(date.split()[0]) >= 10 else date.split()[0] for date in sorted_dates])
+        
+        # 使用与924行附近相同的markdown格式
+        result = f"""
+# 倍塔狗人工智能学习情况阶段总结
+## 基本信息
+**学生:** {correct_student_name}
+**时间:** {'; '.join(mapping)}
+**课次:** {len(sksjs)}
+**课耗:** {coursetime}  \n
+**日期:**{date_list}
+
+---
+
+{ai_summary}
+"""
         
         # 创建summary_plans目录（如果不存在）
         summary_dir = "summary_plans"
@@ -735,15 +780,20 @@ def generate_summary(student_name: str, time: str) -> str:
                 # 设置环境变量确保UTF-8编码
                 os.environ['PYTHONIOENCODING'] = 'utf-8'
                 
-                # 设置与测试脚本相同的成功配置
+                # 设置与测试脚本相同的成功配置，并添加A4纸张格式支持
                 extra_args = [
                     '--standalone',
                     '--from=markdown+smart',
                     '--to=docx',
                     '--wrap=none',
-                    '--metadata=title=倍塔狗人工智能学习情况阶段总结',
                     '--markdown-headings=atx'
                 ]
+                
+                # 检查是否存在template.docx文件作为参考文档（确保A4纸张格式）
+                template_path = os.path.join(os.path.dirname(__file__), 'template.docx')
+                if os.path.exists(template_path):
+                    extra_args.append(f'--reference-doc={template_path}')
+                    print(f"使用参考文档确保A4纸张格式: {template_path}")
                 
                 # 尝试使用pypandoc转换
                 pypandoc.convert_file(
@@ -852,7 +902,25 @@ def career_planning(student_name: str, career_target: str) -> str:
     # 获取所有上课时间列表并生成紧凑型日期列表
     sksjs=sel['上课时间'].dropna().astype(str).tolist()
     # 生成紧凑型日期列表，格式为YYMMDD
-    compact_dates=' '.join([date.split()[0][2:4]+date.split()[0][5:7]+date.split()[0][8:10] if len(date.split()[0]) >= 10 else date.split()[0] for date in sksjs])
+    # 解析日期函数，用于排序
+    def parse_date(date_str):
+        """解析日期字符串为datetime对象以便排序"""
+        try:
+            # 假设日期格式为 YYYY-MM-DD
+            if len(date_str) >= 10:
+                year = int(date_str[:4])
+                month = int(date_str[5:7])
+                day = int(date_str[8:10])
+                return (year, month, day)
+        except:
+            pass
+        return (0, 0, 0)  # 解析失败时返回默认值
+    
+    # 对日期进行排序（从近到远，降序）
+    sorted_dates = sorted(sksjs, key=lambda x: parse_date(x.split()[0]), reverse=True)
+    
+    # 生成排序后的紧凑日期字符串
+    compact_dates=' '.join([date.split()[0][2:4]+date.split()[0][5:7]+date.split()[0][8:10] if len(date.split()[0]) >= 10 else date.split()[0] for date in sorted_dates])
     #根据sel计算总课时数，进行数据清洗移除异常值
     try:
         # 尝试将课时消耗转换为浮点数
@@ -883,6 +951,11 @@ def career_planning(student_name: str, career_target: str) -> str:
                         '''
                         )
         markdown_content = result.content
+        
+        # 删除markdown_content中的一级标题（如果存在）
+        lines = markdown_content.split('\n')
+        filtered_lines = [line for line in lines if not line.strip().startswith('# ')]
+        markdown_content = '\n'.join(filtered_lines)
         
         # 创建PDF保存目录
         pdf_dir = "career_plans"
@@ -917,11 +990,11 @@ def career_planning(student_name: str, career_target: str) -> str:
 
 **目标职业:** {career_target}  
 **生成时间:** {datetime.datetime.now().strftime('%Y年%m月%d日 %H:%M:%S')}  
-**第一次课时间:**{first_class_time}  
-**最后一次课时间:**{last_class_time}  
-**课次:**{class_count}  
-**消耗:**{total_class_time}  
-**日期:**{compact_dates}  
+**首次上课:**{first_class_time}  
+**尾次上课:**{last_class_time}  
+**总和课次:**{class_count}  
+**总和课耗:**{total_class_time}  
+**日期列表:**{compact_dates}  
 
 ---
 
@@ -944,13 +1017,19 @@ def career_planning(student_name: str, career_target: str) -> str:
             
             # 使用pypandoc将markdown文件转换为docx
             try:
-                # 设置额外的参数以优化转换
+                # 设置额外的参数以优化转换，并添加A4纸张格式支持
                 extra_args = [
                     '--standalone',
                     '--from=markdown+smart',
                     '--to=docx',
                     '--wrap=none'
                 ]
+                
+                # 检查是否存在template.docx文件作为参考文档（确保A4纸张格式）
+                template_path = os.path.join(os.path.dirname(__file__), 'template.docx')
+                if os.path.exists(template_path):
+                    extra_args.append(f'--reference-doc={template_path}')
+                    print(f"使用参考文档确保A4纸张格式: {template_path}")
                 
                 pypandoc.convert_file(
                     temp_md_path,

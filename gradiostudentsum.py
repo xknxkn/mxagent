@@ -644,7 +644,25 @@ def career_planning(student_name: str, career_target: str) -> str:
     # 获取所有上课时间列表并生成紧凑型日期列表
     sksjs=sel['上课时间'].dropna().astype(str).tolist()
     # 生成紧凑型日期列表，格式为YYMMDD
-    compact_dates=' '.join([date.split()[0][2:4]+date.split()[0][5:7]+date.split()[0][8:10] if len(date.split()[0]) >= 10 else date.split()[0] for date in sksjs])
+    # 解析日期函数，用于排序
+    def parse_date(date_str):
+        """解析日期字符串为datetime对象以便排序"""
+        try:
+            # 假设日期格式为 YYYY-MM-DD
+            if len(date_str) >= 10:
+                year = int(date_str[:4])
+                month = int(date_str[5:7])
+                day = int(date_str[8:10])
+                return (year, month, day)
+        except:
+            pass
+        return (0, 0, 0)  # 解析失败时返回默认值
+    
+    # 对日期进行排序（从近到远，降序）
+    sorted_dates = sorted(sksjs, key=lambda x: parse_date(x.split()[0]), reverse=True)
+    
+    # 生成排序后的紧凑日期字符串
+    compact_dates=' '.join([date.split()[0][2:4]+date.split()[0][5:7]+date.split()[0][8:10] if len(date.split()[0]) >= 10 else date.split()[0] for date in sorted_dates])
     #根据sel计算总课时数，进行数据清洗移除异常值
     try:
         # 尝试将课时消耗转换为浮点数
@@ -683,6 +701,11 @@ def career_planning(student_name: str, career_target: str) -> str:
                         '''
                         )
         markdown_content = result.content
+        
+        # 删除markdown_content中的一级标题（如果存在）
+        lines = markdown_content.split('\n')
+        filtered_lines = [line for line in lines if not line.strip().startswith('# ')]
+        markdown_content = '\n'.join(filtered_lines)
         
         # 创建PDF保存目录
         pdf_dir = "career_plans"
@@ -744,7 +767,7 @@ def career_planning(student_name: str, career_target: str) -> str:
             
             # 使用pypandoc将markdown文件转换为docx
             try:
-                # 设置额外的参数以优化转换，包括设置字体为宋体
+                # 设置额外的参数以优化转换，包括设置字体为宋体和A4纸张格式
                 extra_args = [
                     '--standalone',
                     '--from=markdown+smart',
@@ -754,6 +777,12 @@ def career_planning(student_name: str, career_target: str) -> str:
                     '--variable=fontfamily="SimSun"',  # 设置字体家族为宋体
                     '--variable=fontsize=12pt'  # 设置字号
                 ]
+                
+                # 检查是否存在template.docx文件作为参考文档（确保A4纸张格式）
+                template_path = os.path.join(os.path.dirname(__file__), 'template.docx')
+                if os.path.exists(template_path):
+                    extra_args.append(f'--reference-doc={template_path}')
+                    print(f"使用参考文档确保A4纸张格式: {template_path}")
                 
                 pypandoc.convert_file(
                     temp_md_path,
