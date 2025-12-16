@@ -658,6 +658,8 @@ def generate_summary(student_name: str, time: str) -> str:
         start = datetime.datetime.now() - datetime.timedelta(days=90)
         end = datetime.datetime.now()
     sel = student_df[(student_df['上课时间'] >= start) & (student_df['上课时间'] <= end)]
+    # 按照时间顺序由远到近排序
+    sel = sel.sort_values('上课时间', ascending=True)
     if sel.empty:
         return f"{correct_student_name} 在时间范围 {start.date()} ~ {end.date()} 内没有课程记录。"
 
@@ -669,16 +671,32 @@ def generate_summary(student_name: str, time: str) -> str:
     if not contents:
         return f"{correct_student_name} 没有课程'内容'进行分析。"
   
-    joined='\n'.join(contents)
+    # 将contents和sksjs的时间一一对应生成带时间的内容
+    timed_contents = []
+    for content, time_str in zip(contents, sksjs):
+        timed_contents.append(f"[{time_str}] {content}")
+    
+    joined='\n'.join(timed_contents)
 
     print(f"generate_summary {correct_student_name}{sname} {start}{end} {joined}")
     try:
         llmsumary = ChatOllama(model="qwen3-vl:235b-cloud",temperature=0.3)
         result = llmsumary.invoke(f'''请把下面多次课程记录的内容合并并生成不超过1500字的中文学习总结，
-        用markdown格式输出，末尾不要写字数统计：
-        {joined}
+        基本信息如下：
+        学生姓名: {correct_student_name}  
+        时间: {'; '.join(mapping)}  
+        课次: {len(sksjs)}  
+        课耗: {coursetime}  
+        学习内容：{joined}  \n
+        要求总结包括学习内容，学习态度、学习方法，学习效果，学习建议等方面\n
+        用markdown格式输出,末尾不要写字数统计,前面不要学生基本信息\n
         ''')
-        ai_summary = result.content
+        # 对AI返回的内容进行处理，删除第一行的一级标题
+        content_lines = result.content.strip().split('\n')
+        if content_lines and content_lines[0].strip().startswith('# '):
+            ai_summary = '\n'.join(content_lines[1:]).strip()
+        else:
+            ai_summary = result.content
         # 生成日期列表并按从近到远排序
         def parse_date(date_str):
             """解析日期字符串为datetime对象以便排序"""
@@ -936,18 +954,30 @@ def career_planning(student_name: str, career_target: str) -> str:
         total_class_time = sel['课时消耗'].sum()
         # 计算原始课次数
         class_count = len(sel[sel['课时消耗'] > 0])
-
-    joined='\n'.join(contents)
+    
+    # 将contents和sksjs的时间一一对应生成带时间的内容
+    timed_contents = []
+    for content, time_str in zip(contents, sksjs):
+        timed_contents.append(f"[{time_str}] {content}")
+    
+    joined = '\n'.join(timed_contents)
     try:
         llm = ChatOllama(model="qwen3-vl:235b-cloud", temperature=0.9)
         result = llm.invoke(f'''你是一个STEM教育顾问，首先根学生已经过内容和特点总结，然后规划后续30小时课程内容.
-                        针对的学生职业目标是{career_target}:
-                        要求在1.构造 2.电路 3.编程 4.智能 5.设计 6.整合 7.创新的七个维度规划课程，
-                        在学生已有学习内容基础上，保持平衡，预留须继续学习的空间，引导学生持续续课学习至少预期达到120小时，并给出达到长远职业目标的路径，包括真实职业项目实现实践，总计240小时。
-                        学生已经学习过的内容如下：
-                        {joined} 
+                        基本信息：
+                        学生姓名: {correct_student_name}  
+                        课次: {class_count}  
+                        课耗: {total_class_time}  
+                        针对的学生职业目标是{career_target}  
+                        学习内容：
+                        {joined} \n
+                        \n
+                        要求在 1.构造 2.电路 3.编程 4.智能 5.设计 6.整合 7.创新 7个维度规划课程，
+                        在学生已有学习内容基础上，保持维度的相对平衡，
+                        预留须继续学习的空间，引导学生持续续课学习至少预期达到120小时，
+                        并给出达到长远职业目标的路径，包括真实职业项目实现实践，总计240小时。
                         请写出课程计划并给出计划制定的理由。
-                        计划用markdown格式输出
+                        计划用markdown格式输出,前面不要学生基本信息
                         '''
                         )
         markdown_content = result.content
