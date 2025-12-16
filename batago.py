@@ -18,6 +18,7 @@ import time
 import unicodedata
 import gradio as gr
 import os
+import socket
 import re
 import sys
 import io
@@ -26,10 +27,105 @@ import pandas as pd
 import json
 from pathlib import Path
 import stat
+from UpFileLive.upfilelive import UpFileLive
+
 
 # 打印显示中文
 sys.stdout.reconfigure(encoding="utf-8")
 sys.stderr.reconfigure(encoding="utf-8")
+
+def initialize_file_sharing():
+    """初始化文件分享功能（使用UpFileLive库）"""
+    # 确保upload目录存在
+    upload_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'upload')
+    if not os.path.exists(upload_dir):
+        os.makedirs(upload_dir)
+    return True
+
+def create_share_link(filename):
+    """为指定文件创建本地分享链接
+    
+    Args:
+        filename: 文件名
+        
+    Returns:
+        str: 文件分享链接，如果失败则返回错误信息
+    """
+    try:
+        # 构建文件路径并验证文件存在
+        upload_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'upload')
+        file_path = os.path.join(upload_dir, filename)
+        
+        if not os.path.exists(file_path):
+            return f"文件分享失败：{filename} 不存在"
+        
+        # 尝试获取本机IP地址
+        hostname = socket.gethostname()
+        try:
+            # 获取本机所有IP地址
+            ip_addresses = [ip for ip in socket.gethostbyname_ex(hostname)[2] 
+                          if not ip.startswith('127.')][:1]  # 取第一个非127开头的IP
+            if ip_addresses:
+                base_ip = ip_addresses[0]
+            else:
+                base_ip = '127.0.0.1'  # 默认使用localhost
+        except:
+            base_ip = '127.0.0.1'  # 如果获取IP失败，使用localhost
+        
+        # 尝试启动一个简单的HTTP服务器（如果还没有启动）
+        if not hasattr(create_share_link, '_server_started') or not create_share_link._server_started:
+            start_file_server()
+            create_share_link._server_started = True
+        
+        # 构建文件访问链接
+        # 注意：这里假设文件服务器在8000端口运行
+        file_url = f"http://{base_ip}:8000/{filename}"
+        
+        print(f"[{datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] 生成本地文件分享链接: {file_url}")
+        return file_url
+    except Exception as e:
+        error_msg = str(e)
+        print(f"[{datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] 文件分享过程出错: {error_msg}")
+        return f"文件分享失败：{str(e)}"
+
+# 为函数添加属性以跟踪服务器是否已启动
+create_share_link._server_started = False
+
+# 启动文件服务器函数
+def start_file_server():
+    """启动一个简单的HTTP服务器来提供文件访问"""
+    try:
+        import threading
+        import http.server
+        import socketserver
+        
+        # 设置服务器参数
+        PORT = 8000
+        upload_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'upload')
+        
+        # 创建一个自定义处理器来指定文件根目录
+        class CustomHTTPHandler(http.server.SimpleHTTPRequestHandler):
+            def __init__(self, *args, **kwargs):
+                super().__init__(*args, directory=upload_dir, **kwargs)
+        
+        # 保存原始工作目录
+        original_dir = os.getcwd()
+        
+        # 创建并启动服务器
+        httpd = socketserver.TCPServer(("", PORT), CustomHTTPHandler)
+        
+        print(f"[{datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] 文件服务器启动在端口 {PORT}")
+        print(f"[{datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] 服务目录: {upload_dir}")
+        
+        # 在后台线程中运行服务器
+        server_thread = threading.Thread(target=httpd.serve_forever, daemon=True)
+        server_thread.start()
+        
+        # 不恢复工作目录，避免影响服务器
+        return True
+    except Exception as e:
+        print(f"[{datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] 启动文件服务器失败: {str(e)}")
+        return False
 
 # 删除同名学生旧文件的函数
 def clean_old_student_files(student_name, file_type='career'):
@@ -850,7 +946,27 @@ def generate_summary(student_name: str, time: str) -> str:
                 result += f"- Word文件名: {safe_filename}\n"
                 result += f"- Word文件保存位置: {docx_path}\n"
                 result += f"- Word文件大小: {os.path.getsize(docx_path) / 1024:.1f} KB\n"
+                
+                # 生成文件分享链接
+                print(f"[{datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] 为摘要文件生成分享链接: {safe_filename}")
+                # 将文件复制到upload目录以便生成分享链接
+                upload_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'upload')
+                if not os.path.exists(upload_dir):
+                    os.makedirs(upload_dir)
+                upload_file_path = os.path.join(upload_dir, safe_filename)
+                # 复制文件到upload目录
+                shutil.copy2(docx_path, upload_file_path)
+                print(f"[{datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] 文件已复制到upload目录: {upload_file_path}")
+                # 生成分享链接
+                share_link = create_share_link(safe_filename)
+                if share_link.startswith("http"):
+                    result += f"\n🔗 **文件分享链接**: {share_link}\n"
+                else:
+                    result += f"\n⚠️ **分享链接生成失败**: {share_link}\n"
+                
                 result += f"\n💡 **提示**: 文件已生成在系统的{summary_dir}目录中，您可以直接访问该目录查看和打开文件。"
+                
+                # 百度网盘功能已移除
             else:
                 raise Exception(f"生成的Word文档可能为空或未正确创建: {docx_path}")
                 
@@ -1289,7 +1405,15 @@ def upload_file(file_path, progress=gr.Progress()):
         
         # 验证文件是否成功上传且大小一致
         if os.path.exists(target_path) and os.path.getsize(target_path) == file_size:
-            return f"文件上传成功：{filename} 已保存到 upload 目录"
+            # 生成文件分享链接
+            share_link = create_share_link(filename)
+            
+            # 如果生成分享链接成功（返回的不是错误信息），则包含在返回消息中
+            if share_link.startswith("http"):
+                return f"文件上传成功：{filename} 已保存到 upload 目录\n文件分享链接：{share_link}"
+            else:
+                # 分享链接生成失败，但上传本身是成功的
+                return f"文件上传成功：{filename} 已保存到 upload 目录\n{share_link}"
         else:
             # 如果目标文件存在但大小不一致，尝试删除它
             if os.path.exists(target_path):
@@ -1419,4 +1543,4 @@ with demo:
     # 绑定跳过按钮
     skip_button.click(fn=skip_api_key, inputs=[], outputs=[api_status, api_container, skip_container, main_container])
 
-demo.launch()
+demo.launch(share=True)
