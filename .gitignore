@@ -1,0 +1,58 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+
+# Virtual Environment
+venv/
+env/
+.env/
+.python-version
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Build
+build/
+dist/
+*.egg-info/
+
+# Logs
+logs/
+*.log
+
+# Test
+coverage/
+.pytest_cache/
+
+# Temporary files
+*.tmp
+*.temp
+*.bak
+*~
+
+# Career plans and summary plans (generated documents)
+career_plans/
+summary_plans/
+
+# Upload directory
+upload/
+
+# Generated Word documents
+*.docx
+
+# Certificate files
+*.pem
+
+# Testing scripts (optional, uncomment if needed)
+# test_*.py
