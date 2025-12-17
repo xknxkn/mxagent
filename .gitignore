@@ -1,6 +1,7 @@
 # Python
 __pycache__/
 *.py[cod]
+*.pyc  # 明确忽略编译后的Python文件
 *$py.class
 *.so
 .Python
