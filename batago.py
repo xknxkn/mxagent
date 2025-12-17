@@ -25,9 +25,53 @@ import io
 import datetime
 import pandas as pd
 import json
+import paramiko
+from scp import SCPClient
 from pathlib import Path
 import stat
 from UpFileLive.upfilelive import UpFileLive
+import paramiko
+from scp import SCPClient
+
+def upload_file_via_scp(local_path, remote_path):
+    """使用SCP将文件上传到远程服务器"""
+    try:
+        # SCP连接参数
+        hostname = '121.40.182.30'
+        username = 'batago'
+        password = '4008737505'
+        port = 22
+        
+        # 创建SSH客户端
+        ssh = paramiko.SSHClient()
+        ssh.set_missing_host_key_policy(paramiko.AutoAddPolicy())
+        
+        # 连接到服务器
+        ssh.connect(hostname=hostname, username=username, password=password, port=port)
+        
+        # 确保远程目录存在
+        remote_dir = os.path.dirname(remote_path)
+        stdin, stdout, stderr = ssh.exec_command(f'mkdir -p {remote_dir}')
+        exit_status = stdout.channel.recv_exit_status()
+        if exit_status != 0:
+            error_msg = stderr.read().decode('utf-8')
+            print(f"创建远程目录失败: {error_msg}")
+            ssh.close()
+            return False
+        
+        # 创建SCP客户端
+        with SCPClient(ssh.get_transport()) as scp:
+            # 上传文件
+            scp.put(local_path, remote_path)
+            print(f"文件已成功上传到服务器: {remote_path}")
+            
+        ssh.close()
+        return True
+    except Exception as e:
+        print(f"SCP上传失败: {str(e)}")
+        return False
+import paramiko
+from scp import SCPClient
 
 
 # 打印显示中文
@@ -42,54 +86,61 @@ def initialize_file_sharing():
         os.makedirs(upload_dir)
     return True
 
-def create_share_link(filename):
-    """为指定文件创建本地分享链接
+def create_share_link(file_path):
+    """
+    创建一个文件分享链接，使用SCP将文件上传到远程服务器
     
     Args:
-        filename: 文件名
-        
+        file_path: 文件路径
+    
     Returns:
-        str: 文件分享链接，如果失败则返回错误信息
+        str: SCP下载命令或错误信息
     """
     try:
-        # 构建文件路径并验证文件存在
-        upload_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'upload')
-        file_path = os.path.join(upload_dir, filename)
+        import os
+        import datetime
+        import paramiko
+        from scp import SCPClient
+        
+        filename = os.path.basename(file_path)
         
         if not os.path.exists(file_path):
             return f"文件分享失败：{filename} 不存在"
         
-        # 尝试获取本机IP地址
-        hostname = socket.gethostname()
-        try:
-            # 获取本机所有IP地址
-            ip_addresses = [ip for ip in socket.gethostbyname_ex(hostname)[2] 
-                          if not ip.startswith('127.')][:1]  # 取第一个非127开头的IP
-            if ip_addresses:
-                base_ip = ip_addresses[0]
-            else:
-                base_ip = '127.0.0.1'  # 默认使用localhost
-        except:
-            base_ip = '127.0.0.1'  # 如果获取IP失败，使用localhost
+        # 服务器配置
+        hostname = '121.40.182.30'
+        username = 'batago'
+        password = '4008737505'
+        port = 22
         
-        # 尝试启动一个简单的HTTP服务器（如果还没有启动）
-        if not hasattr(create_share_link, '_server_started') or not create_share_link._server_started:
-            start_file_server()
-            create_share_link._server_started = True
+        # 创建远程路径
+        remote_path = f"/opt/redmine-3.0.1-0/apache2/htdocs/sharefile/{filename}"
         
-        # 构建文件访问链接
-        # 注意：这里假设文件服务器在8000端口运行
-        file_url = f"http://{base_ip}:8000/{filename}"
-        
-        print(f"[{datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] 生成本地文件分享链接: {file_url}")
-        return file_url
+        # 使用SCP上传文件
+        if upload_file_via_scp(file_path, remote_path):
+            # 生成SCP下载命令
+            scp_command = f"scp {username}@{hostname}:{remote_path} ."
+            
+            # 生成HTTP下载链接
+            # /opt/redmine-3.0.1-0/apache2/htdocs 对应 http://121.40.182.30:8000/
+            # sharefile目录位于htdocs下，所以HTTP路径是 /sharefile/
+            filename = os.path.basename(file_path)
+            http_link = f"http://121.40.182.30:8000/sharefile/{filename}"
+            
+            print(f"[{datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] 文件已上传到服务器，可通过以下链接下载:")
+            print(f"- SCP命令: {scp_command}")
+            print(f"- HTTP链接: {http_link}")
+            
+            # 返回HTTP链接，同时在注释中包含SCP命令
+            return http_link
+        else:
+            return f"文件分享失败：SCP上传失败"
+            
     except Exception as e:
-        error_msg = str(e)
-        print(f"[{datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] 文件分享过程出错: {error_msg}")
+        print(f"[{datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] 文件分享过程出错: {str(e)}")
         return f"文件分享失败：{str(e)}"
 
-# 为函数添加属性以跟踪服务器是否已启动
-create_share_link._server_started = False
+# SCP文件分享功能不需要额外的服务器启动标志
 
 # 启动文件服务器函数
 def start_file_server():
@@ -100,32 +151,222 @@ def start_file_server():
         import socketserver
         
         # 设置服务器参数
-        PORT = 8000
+        base_port = 8000
+        max_port_attempts = 10
         upload_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'upload')
         
         # 创建一个自定义处理器来指定文件根目录
         class CustomHTTPHandler(http.server.SimpleHTTPRequestHandler):
             def __init__(self, *args, **kwargs):
                 super().__init__(*args, directory=upload_dir, **kwargs)
+            
+            # 覆盖日志方法，减少输出
+            def log_message(self, format, *args):
+                return
         
-        # 保存原始工作目录
-        original_dir = os.getcwd()
+        # 尝试在不同端口上启动服务器
+        for port_offset in range(max_port_attempts):
+            current_port = base_port + port_offset
+            try:
+                # 创建并启动服务器
+                httpd = socketserver.TCPServer(("", current_port), CustomHTTPHandler)
+                httpd.allow_reuse_address = True  # 允许地址重用
+                
+                print(f"[{datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] 文件服务器启动在端口 {current_port}")
+                print(f"[{datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] 服务目录: {upload_dir}")
+                
+                # 在后台线程中运行服务器
+                server_thread = threading.Thread(target=httpd.serve_forever, daemon=True)
+                server_thread.start()
+                
+                # 保存当前使用的端口
+                start_file_server.current_port = current_port
+                return True
+            except OSError as e:
+                if "[WinError 10048]" in str(e) or "Address already in use" in str(e):
+                    print(f"[{datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] 端口 {current_port} 已被占用，尝试下一个端口...")
+                    continue
+                else:
+                    raise
         
-        # 创建并启动服务器
-        httpd = socketserver.TCPServer(("", PORT), CustomHTTPHandler)
-        
-        print(f"[{datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] 文件服务器启动在端口 {PORT}")
-        print(f"[{datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] 服务目录: {upload_dir}")
-        
-        # 在后台线程中运行服务器
-        server_thread = threading.Thread(target=httpd.serve_forever, daemon=True)
-        server_thread.start()
-        
-        # 不恢复工作目录，避免影响服务器
-        return True
+        print(f"[{datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] 尝试了 {max_port_attempts} 个端口后仍无法启动服务器")
+        return False
     except Exception as e:
         print(f"[{datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] 启动文件服务器失败: {str(e)}")
         return False
+
+# 设置默认端口
+start_file_server.current_port = 8000
+
+# 删除同名学生旧文件的函数
+def clean_old_student_files(student_name, file_type='career'):
+    """
+    删除指定学生的旧文件，只保留最新的文件
+    
+    Args:
+        student_name: 学生姓名
+        file_type: 文件类型，'career'表示career_plans目录，'summary'表示summary_plans目录
+    
+    Returns:
+        dict: 删除的文件信息
+    """
+
+# 清理远程服务器上的学生旧文件的函数
+def clean_remote_student_files(student_name, file_type='career'):
+    """
+    清理远程服务器上指定学生的旧文件，只保留最新的文件
+    
+    Args:
+        student_name: 学生姓名
+        file_type: 文件类型，'career'表示职业规划文件，'summary'表示总结文件
+    
+    Returns:
+        dict: 删除的文件信息
+    """
+    try:
+        import paramiko
+        import re
+        import datetime
+        import os
+        
+        # 服务器配置
+        hostname = '121.40.182.30'
+        username = 'batago'
+        password = '4008737505'
+        port = 22
+        
+        # 根据file_type确定远程目录路径和文件模式
+        if file_type == 'summary':
+            REMOTE_DIR = '/opt/redmine-3.0.1-0/apache2/htdocs/sharefile/summary_plans'
+            # 文件命名规则：学生姓名_总结_起始日期_结束日期_时间戳.docx
+            file_pattern = re.compile(r'^%s_总结_(\d{8})_(\d{8})_(\d{8})_(\d{6})\.docx$' % re.escape(normalize_name(student_name).replace(' ', '_')))
+        else:
+            REMOTE_DIR = '/opt/redmine-3.0.1-0/apache2/htdocs/sharefile/career_plans'
+            # 文件命名规则：学生姓名_规划_年月日_时分秒.docx
+            file_pattern = re.compile(r'^%s_规划_\d{8}_\d{6}\.docx$' % re.escape(normalize_name(student_name).replace(' ', '_')))
+        
+        # 创建SSH客户端
+        ssh = paramiko.SSHClient()
+        ssh.set_missing_host_key_policy(paramiko.AutoAddPolicy())
+        
+        # 连接到服务器
+        ssh.connect(hostname=hostname, username=username, password=password, port=port)
+        
+        # 检查远程目录是否存在
+        stdin, stdout, stderr = ssh.exec_command(f'test -d {REMOTE_DIR} && echo "exists" || echo "not_exists"')
+        dir_exists = stdout.read().decode('utf-8').strip() == 'exists'
+        
+        if not dir_exists:
+            print(f"远程目录 {REMOTE_DIR} 不存在")
+            ssh.close()
+            return {
+                'student_name': student_name,
+                'total_files': 0,
+                'deleted_count': 0,
+                'deleted_files': [],
+                'kept_file': None,
+                'status': 'error',
+                'message': '远程目录不存在'
+            }
+        
+        # 列出远程目录中的所有文件
+        stdin, stdout, stderr = ssh.exec_command(f'ls -la {REMOTE_DIR}')
+        output = stdout.read().decode('utf-8')
+        
+        # 收集该学生的所有文件
+        student_files = []
+        for line in output.split('\n'):
+            if line and not line.startswith('total') and not line.startswith('d'):
+                # 提取文件名（假设ls -la输出格式，最后一个字段是文件名）
+                parts = line.split()
+                if len(parts) >= 9:
+                    filename = ' '.join(parts[8:])
+                    match = file_pattern.match(filename)
+                    if match:
+                        try:
+                            # 获取文件的修改时间
+                            stdin, stdout, stderr = ssh.exec_command(f'stat -c "%Y" {REMOTE_DIR}/{filename} 2>/dev/null || echo "0"')
+                            mtime_str = stdout.read().decode('utf-8').strip()
+                            try:
+                                mtime = float(mtime_str)
+                                file_datetime = datetime.datetime.fromtimestamp(mtime)
+                            except ValueError:
+                                # 如果无法获取修改时间，尝试从文件名解析
+                                if '_' in filename:
+                                    # 尝试从文件名提取时间信息
+                                    time_parts = re.findall(r'\d{8}_\d{6}', filename)
+                                    if time_parts:
+                                        datetime_str = time_parts[-1].replace('_', '')
+                                        file_datetime = datetime.datetime.strptime(datetime_str, '%Y%m%d%H%M%S')
+                                    else:
+                                        # 如果无法解析时间，使用当前时间
+                                        file_datetime = datetime.datetime.now()
+                                else:
+                                    file_datetime = datetime.datetime.now()
+                            
+                            student_files.append({
+                                'filename': filename,
+                                'datetime': file_datetime
+                            })
+                        except Exception as e:
+                            print(f"处理文件 {filename} 时出错: {e}")
+                            continue
+        
+        # 如果该学生有多个文件
+        deleted_count = 0
+        deleted_files = []
+        kept_file = None
+        
+        if len(student_files) > 1:
+            # 按时间排序，最新的在前
+            student_files.sort(key=lambda x: x['datetime'], reverse=True)
+            
+            # 保留最新的文件，删除其余的
+            files_to_delete = student_files[1:]
+            
+            for file_info in files_to_delete:
+                file_path = f"{REMOTE_DIR}/{file_info['filename']}"
+                try:
+                    # 删除远程文件
+                    stdin, stdout, stderr = ssh.exec_command(f'rm -f {file_path}')
+                    exit_status = stdout.channel.recv_exit_status()
+                    if exit_status == 0:
+                        deleted_count += 1
+                        deleted_files.append(file_info['filename'])
+                        print(f"已删除远程旧文件({file_type}): {file_info['filename']}")
+                    else:
+                        error_msg = stderr.read().decode('utf-8')
+                        print(f"删除远程文件 {file_info['filename']} 失败: {error_msg}")
+                except Exception as e:
+                    print(f"删除远程文件 {file_info['filename']} 时出错: {e}")
+            
+            kept_file = student_files[0]['filename']
+        elif len(student_files) == 1:
+            kept_file = student_files[0]['filename']
+        
+        ssh.close()
+        
+        return {
+            'student_name': student_name,
+            'total_files': len(student_files),
+            'deleted_count': deleted_count,
+            'deleted_files': deleted_files,
+            'kept_file': kept_file,
+            'status': 'success',
+            'message': '远程文件清理完成'
+        }
+    
+    except Exception as e:
+        print(f"清理远程文件时出错: {str(e)}")
+        return {
+            'student_name': student_name,
+            'total_files': 0,
+            'deleted_count': 0,
+            'deleted_files': [],
+            'kept_file': None,
+            'status': 'error',
+            'message': f'清理远程文件时出错: {str(e)}'
+        }
 
 # 删除同名学生旧文件的函数
 def clean_old_student_files(student_name, file_type='career'):
@@ -947,22 +1188,25 @@ def generate_summary(student_name: str, time: str) -> str:
                 result += f"- Word文件保存位置: {docx_path}\n"
                 result += f"- Word文件大小: {os.path.getsize(docx_path) / 1024:.1f} KB\n"
                 
-                # 生成文件分享链接
+                # 确保通过SCP上传到远程服务器的summary_plans目录
                 print(f"[{datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] 为摘要文件生成分享链接: {safe_filename}")
-                # 将文件复制到upload目录以便生成分享链接
-                upload_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'upload')
-                if not os.path.exists(upload_dir):
-                    os.makedirs(upload_dir)
-                upload_file_path = os.path.join(upload_dir, safe_filename)
-                # 复制文件到upload目录
-                shutil.copy2(docx_path, upload_file_path)
-                print(f"[{datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] 文件已复制到upload目录: {upload_file_path}")
-                # 生成分享链接
-                share_link = create_share_link(safe_filename)
-                if share_link.startswith("http"):
-                    result += f"\n🔗 **文件分享链接**: {share_link}\n"
+                remote_path = f"/opt/redmine-3.0.1-0/apache2/htdocs/sharefile/summary_plans/{safe_filename}"
+                if upload_file_via_scp(docx_path, remote_path):
+                    print(f"[{datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] 文件已成功通过SCP上传到远程服务器的summary_plans目录")
+                    
+                    # 清理远程服务器上的旧摘要文件
+                    print(f"清理学生 {correct_student_name} 的远程旧摘要文件...")
+                    clean_result = clean_remote_student_files(correct_student_name, file_type='summary')
+                    if clean_result['deleted_count'] > 0:
+                        print(f"远程清理结果: 删除了 {clean_result['deleted_count']} 个旧摘要文件")
+                        result += f"\n🧹 **远程清理结果**: 删除了 {clean_result['deleted_count']} 个旧摘要文件"
+                    
+                    # 生成正确的HTTP链接，指向summary_plans子目录
+                    http_link = f"http://121.40.182.30:8000/sharefile/summary_plans/{safe_filename}"
+                    result += f"\n🔗 **文件分享链接**: {http_link}\n"
                 else:
-                    result += f"\n⚠️ **分享链接生成失败**: {share_link}\n"
+                    print(f"[{datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] SCP上传失败")
+                    result += f"\n⚠️ **文件上传失败**: 无法将文件上传到远程服务器\n"
                 
                 result += f"\n💡 **提示**: 文件已生成在系统的{summary_dir}目录中，您可以直接访问该目录查看和打开文件。"
                 
@@ -1113,9 +1357,9 @@ def career_planning(student_name: str, career_target: str) -> str:
         clean_result = clean_old_student_files(student_name)
         print(f"清理结果: 删除了 {clean_result['deleted_count']} 个旧文件")
         
-        # 生成Word文件名（使用学生姓名和当前时间）
+        # 生成Word文件名（使用学生姓名、规划标识和当前时间）
         timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
-        safe_filename = f"{normalize_name(student_name).replace(' ', '_')}_{timestamp}.docx"
+        safe_filename = f"{normalize_name(student_name).replace(' ', '_')}_规划_{timestamp}.docx"
         docx_path = os.path.join(pdf_dir, safe_filename)
         
         # 检查pandoc是否安装
@@ -1203,8 +1447,35 @@ def career_planning(student_name: str, career_target: str) -> str:
             if os.path.exists(docx_path) and os.path.getsize(docx_path) > 0:
                 docx_status = f"Word文档已成功生成并保存至: {docx_path}"
                 print(docx_status)
-                # 返回成功状态和文件路径
-                return {"content": f"{markdown_content}\n\n---\n\n{docx_status}", "file_path": docx_path}
+                
+                # 使用SCP上传文件到远程服务器的career_plans目录
+                # 确保远程文件名与本地保持一致，包含"_规划_"
+                remote_filename = f"{normalize_name(student_name).replace(' ', '_')}_规划_{timestamp}.docx"
+                remote_path = f"/opt/redmine-3.0.1-0/apache2/htdocs/sharefile/career_plans/{remote_filename}"
+                
+                # 生成HTTP分享链接
+                http_link = f"http://121.40.182.30:8000/sharefile/career_plans/{remote_filename}"
+                
+                # 尝试上传文件到远程服务器
+                scp_uploaded = upload_file_via_scp(docx_path, remote_path)
+                
+                if scp_uploaded:
+                    docx_status += f"\n\n📄 **远程文件上传成功**"
+                    docx_status += f"\n🔗 **文件分享链接**: {http_link}"
+                    print(f"文件已上传到服务器career_plans目录，可通过以下链接访问: {http_link}")
+                    
+                    # 清理远程服务器上的旧文件，只保留最新的
+                    print(f"清理学生 {student_name} 的远程旧职业规划文件...")
+                    clean_result = clean_remote_student_files(student_name, file_type='career')
+                    if clean_result['deleted_count'] > 0:
+                        print(f"清理结果: 删除了 {clean_result['deleted_count']} 个旧文件")
+                        docx_status += f"\n🧹 **清理结果**: 删除了 {clean_result['deleted_count']} 个旧文件"
+                    
+                    # 返回成功状态、文件路径
+                    return {"content": f"{markdown_content}\n\n---\n\n{docx_status}", "file_path": docx_path}
+                else:
+                    docx_status += f"\n\n⚠️ **注意**: 文件生成成功但上传到服务器失败，请检查本地文件: {docx_path}"
+                    return {"content": f"{markdown_content}\n\n---\n\n{docx_status}", "file_path": docx_path}
             else:
                 raise Exception(f"生成的Word文档可能为空或未正确创建: {docx_path}")
                 
@@ -1257,20 +1528,8 @@ def llmtool_invoke_tool(str_input: str):
                     
                     # 处理返回字典格式的情况（career_planning函数）
                     if isinstance(tool_result, dict) and 'content' in tool_result and 'file_path' in tool_result:
-                        content = tool_result['content']
-                        file_path = tool_result['file_path']
-                        
-                        # 如果有文件路径，添加下载链接信息
-                        if file_path and os.path.exists(file_path):
-                            file_name = os.path.basename(file_path)
-                            # 在Gradio中，文件会自动提供下载链接
-                            content += f"\n\n---\n\n📄 **Word文档下载信息**\n"
-                            content += f"- 文件名: {file_name}\n"
-                            content += f"- 保存位置: {file_path}\n"
-                            content += f"- 大小: {os.path.getsize(file_path) / 1024:.1f} KB\n"
-                            content += f"\n💡 **提示**: 文件已生成在系统的career_plans目录中，您可以直接访问该目录查看和打开文件。"
-                        
-                        return content
+                        # 直接返回career_planning函数生成的content，因为它已经包含了完整的文档信息和分享链接
+                        return tool_result['content']
                     else:
                         return tool_result
         else:
