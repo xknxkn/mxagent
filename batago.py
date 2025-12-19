@@ -29,7 +29,6 @@ import paramiko
 from scp import SCPClient
 from pathlib import Path
 import stat
-from UpFileLive.upfilelive import UpFileLive
 import paramiko
 from scp import SCPClient
 
@@ -1235,13 +1234,15 @@ def generate_summary(student_name: str, time: str) -> str:
         return f"生成摘要时出错：{error_msg}"
 
 @tool
-def career_planning(student_name: str, career_target: str) -> str:
+def career_planning(student_name: str, career_target: str, parent_expect: str = "", following_course_suggest: str = "") -> str:
     """
     根据学生姓名和职业目标，阅读上课反馈xlsx文件,总结学生学习了什么内容，根据职业生涯目标给出后续课程建议
     职业目标关键词：我想当 我想成为 我的理想是 我准备 等
     Args:
         student_name (str): The name of the student to query.
         career_target (str): 职业目标，根据我想当 我想成为 我的理想是 我准备 等关键词获得
+        parent_expect (str): 家长希望，家长对学生学习和职业发展的期望
+        following_course_suggest (str): 后续课程建议，教师或顾问对学生后续课程的初步建议
     Returns:
         str: 后续课程建议，30小时课程计划
     """
@@ -1329,7 +1330,8 @@ def career_planning(student_name: str, career_target: str) -> str:
                         课次: {class_count}  
                         课耗: {total_class_time}  
                         针对的学生职业目标是{career_target}  
-                        学习内容：
+                        {"家长希望: " + parent_expect + "  " if parent_expect else ""}
+                        {"后续课程建议: " + following_course_suggest + "  " if following_course_suggest else ""}
                         {joined} \n
                         \n
                         要求在 1.构造 2.电路 3.编程 4.智能 5.设计 6.整合 7.创新 7个维度规划课程，
